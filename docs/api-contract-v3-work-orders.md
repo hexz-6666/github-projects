@@ -118,9 +118,10 @@
 
 幂等语义：
 
-- 同一 `configId` 已存在：`200`，响应体带 `"idempotent": true`，返回原工单；
+- 先按 `alert_id` 查已有工单，再检查告警是否可处理、配置是否 `ACTIVE`；因此同一 `configId` 已存在时，即使告警后来已解决或配置已停用，仍返回 `200` 和 `"idempotent": true` 及原工单；
 - 不同 `configId` 已存在：`409 WORK_ORDER_ALREADY_EXISTS_DIFFERENT_CONFIG`，不静默复用；
-- 并发唯一键冲突由独立事务回滚，再在事务外读取已有工单。
+- 建单在独立事务内按 `告警 → 配置` 固定顺序锁定，检查、`work_order` 插入、`CREATED` 事件和审计同事务提交；并发唯一键冲突回滚后，在事务外读取已有工单；
+- `UNIQUE(alert_id)` 仍由数据库最终兜底。
 
 建单时把配置快照、版本、SLA、`requiresReview`、`assignRole` 固化到工单；后续配置发布或修改不影响已有工单。`dueAt = createdAt + slaMinutes`（取已发布快照的 SLA，不取未发布草稿）。
 
@@ -145,6 +146,31 @@ OPEN / ASSIGNED / IN_PROGRESS → CANCELLED
 | POST | `/api/v3/work-orders/{id}/notes` | 当前处理人/ADMIN | `{note, expectedVersion}`；追加 `NOTE_ADDED` |
 
 动作为 `CLAIM`、`START`、`RESOLVE`、`CANCEL`。`CANCEL` 仅 ADMIN。ADMIN 指派到与配置 `assignRole` 不同的有效 REVIEWER/ADMIN 时，审计 `detail.roleOverride=true`；不通过请求体伪造角色。
+
+### 4.0 服务端动作能力
+
+详情、创建响应和动作响应都包含 `actions`。前端直接使用这些字段，不再自行推断权限：
+
+```json
+{
+  "actions": {
+    "canAssign": false,
+    "canAssignSelf": true,
+    "canClaim": true,
+    "canStart": false,
+    "canResolve": false,
+    "canCancel": false,
+    "canAddNote": false
+  }
+}
+```
+
+- `canAssign`：ADMIN，且 `OPEN`/`ASSIGNED`；
+- `canAssignSelf`/`canClaim`：REVIEWER 且快照 `assignRole=REVIEWER` 的 `OPEN` 工单；ADMIN 使用 `canAssign` 或 `canClaim`；
+- `canStart`：`ASSIGNED` 且当前用户是处理人或 ADMIN；
+- `canResolve`：`IN_PROGRESS` 且当前用户是处理人或 ADMIN；
+- `canCancel`：仅 ADMIN 且非终态；前端必须弹出不可恢复确认框，取消确认不得发送请求；
+- `canAddNote`：非终态且当前用户是处理人或 ADMIN。
 
 ### 4.1 完成复核规则
 
@@ -176,6 +202,13 @@ OPEN / ASSIGNED / IN_PROGRESS → CANCELLED
 
 ## 6. 数据库与验证边界
 
-V4 仅新增 `work_order_config`、`work_order_config_version`、`work_order`、`work_order_event` 及约束/索引/外键，不修改 V1/V3 表，不 DROP、不清理历史。发布顺序必须先插入不可变版本、再更新 `published_version`，以满足 MySQL 复合外键。
+V4 仅新增 `work_order_config`、`work_order_config_version`、`work_order`、`work_order_event` 及约束/索引/外键，不修改 V1/V3 表数据，不 DROP 表、不清理历史。发布顺序必须先插入不可变版本、再更新 `published_version`，以满足 MySQL 复合外键。
 
-截至本文件生成时：Java/Stub、Vue 构建和浏览器流程已实测；**MySQL 8 的 V4 未执行**，因为本机没有可用演示账号，不能声称 MySQL 通过。V4 只做过静态审查。
+新增的组合完整性约束：
+
+- `ads_alert_review` 唯一键 `uk_review_id_alert(review_id, alert_id)`，`work_order` 外键 `fk_wo_resolution_review_alert(resolution_review_id, alert_id)`，阻止引用其他告警的复核记录；
+- `work_order_config_version` 唯一键 `uk_wocv_id_config_version(id, config_id, version_no)`，`work_order` 外键 `fk_wo_config_version_consistent(config_version_id, config_id, config_version_no)`，阻止版本 ID 与配置/版本号指向不同版本；
+- 保留原单列/双列外键兼容，新增组合外键作为权威一致性守卫；
+- 约束使用 `information_schema` 守卫逐条添加，干净库、已执行库和部分执行库均可重复执行 V4；不依赖 Flyway/Liquibase。
+
+截至本文件更新时：Java/Stub、Vue 构建和浏览器流程已实测；**MySQL 8 的 V4 仍未执行**，因为本机没有可用演示账号，不能声称 MySQL 通过。已提供环境变量门控的 `M2MysqlIT` 元数据/组合外键测试，未设置 `DB_URL` 时不会运行。

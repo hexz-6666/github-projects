@@ -9,8 +9,6 @@ import com.example.fraud.domain.ReviewRecord;
 import com.example.fraud.domain.ReviewResult;
 import com.example.fraud.domain.SlaStatus;
 import com.example.fraud.domain.WorkOrderConfig;
-import com.example.fraud.domain.WorkOrderConfigSnapshot;
-import com.example.fraud.domain.WorkOrderConfigStatus;
 import com.example.fraud.domain.WorkOrderConfigVersion;
 import com.example.fraud.domain.WorkOrderEventRecord;
 import com.example.fraud.domain.WorkOrderEventType;
@@ -80,36 +78,17 @@ public class WorkOrderService {
 
     public CreateResult create(long alertId, long configId, Authentication authentication,
                                HttpServletRequest servletRequest) {
-        AlertRecord alert = requireAlert(alertId);
-        requireActionableAlert(alert);
-        WorkOrderConfig config = configStore.findConfig(configId)
-                .orElseThrow(WorkOrderConfigService::configNotFound);
-        if (config.getStatus() == WorkOrderConfigStatus.DISABLED) {
-            throw WorkOrderConfigService.configDisabled();
-        }
-        if (config.getStatus() != WorkOrderConfigStatus.ACTIVE || config.getPublishedVersion() == null) {
-            throw WorkOrderConfigService.configNotPublished();
-        }
-        WorkOrderConfigVersion version = configStore.findVersion(configId, config.getPublishedVersion())
-                .orElseThrow(WorkOrderConfigService::configNotPublished);
-        WorkOrderConfigSnapshot snapshot = version.toSnapshot();
-        OrderRecord order = fraudStore.findOrder(alert.getOrderId()).orElse(null);
-        if (!matcher.matches(alert, order, snapshot)) {
-            throw new ApiException(HttpStatus.CONFLICT, "CONFIG_NOT_MATCHED",
-                    "配置未匹配当前告警，不能创建工单");
-        }
-        Instant now = clock.instant();
-        Instant dueAt = now.plusSeconds(snapshot.getSlaMinutes() * 60L);
+        requireAlert(alertId);
         String actor = actor(authentication);
-        WorkOrderRecord pending = new WorkOrderRecord(0L, alertId, configId, version.getId(),
-                version.getVersionNo(), json(snapshot), snapshot.getAssignRole(), null,
-                WorkOrderStatus.OPEN, snapshot.isRequiresReview(), snapshot.getSlaMinutes(),
-                dueAt, null, null, null, 1, actor, actor, now, now);
+        String role = auditService.roleName(authentication);
+        String requestId = auditService.requestId(servletRequest);
         try {
-            WorkOrderRecord created = createWriter.create(pending, actor,
-                    auditService.roleName(authentication), auditService.requestId(servletRequest));
-            return new CreateResult(created, false);
+            WorkOrderCreateWriter.Result result = createWriter.create(alertId, configId, actor, role, requestId);
+            return new CreateResult(result.getRecord(), result.isIdempotent());
         } catch (DuplicateWorkOrderException exception) {
+            // Defensive fallback for a unique-key race outside the normal
+            // alert-row lock path. This read happens after the writer transaction
+            // has rolled back, so it is not inside a rollback-only transaction.
             WorkOrderRecord existing = workOrderStore.findByAlertId(alertId)
                     .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT,
                             "WORK_ORDER_ALREADY_EXISTS", "该告警已存在工单"));
@@ -141,16 +120,18 @@ public class WorkOrderService {
 
     public Map<String, Object> detail(long id, Authentication authentication) {
         WorkOrderRecord record = requireVisible(id, authentication);
-        return detail(record);
+        return detail(record, authentication);
     }
 
     public List<Map<String, Object>> alertWorkOrders(long alertId, Authentication authentication) {
         requireAlert(alertId);
         List<Map<String, Object>> result = new ArrayList<Map<String, Object>>();
-        for (WorkOrderRecord record : workOrderStore.findWorkOrders(WorkOrderScope.ALL, null, null, null, 0, 100)) {
-            if (record.getAlertId() == alertId && canView(record, authentication)) {
-                result.add(summary(record));
-            }
+        // UNIQUE(alert_id) means there is at most one work order. Query by the
+        // alert key instead of taking the newest 100 work orders and filtering
+        // in memory; otherwise an older work order would silently disappear.
+        WorkOrderRecord record = workOrderStore.findByAlertId(alertId).orElse(null);
+        if (record != null && canView(record, authentication)) {
+            result.add(summary(record));
         }
         return result;
     }
@@ -249,7 +230,7 @@ public class WorkOrderService {
         detail.put("toStatus", WorkOrderStatus.ASSIGNED.name());
         audit(authentication, eventType == WorkOrderEventType.REASSIGNED
                 ? "WORK_ORDER_REASSIGNED" : "WORK_ORDER_ASSIGNED", id, request, detail);
-        return detail(workOrderStore.findById(id).orElseThrow(WorkOrderService::notFound));
+        return detail(workOrderStore.findById(id).orElseThrow(WorkOrderService::notFound), authentication);
     }
 
     @Transactional
@@ -347,7 +328,7 @@ public class WorkOrderService {
             throw new ApiException(HttpStatus.CONFLICT, "INVALID_WORK_ORDER_TRANSITION",
                     "不支持的工单动作");
         }
-        return detail(workOrderStore.findById(id).orElseThrow(WorkOrderService::notFound));
+        return detail(workOrderStore.findById(id).orElseThrow(WorkOrderService::notFound), authentication);
     }
 
     @Transactional
@@ -373,7 +354,7 @@ public class WorkOrderService {
                 auditService.requestId(request));
         audit(authentication, "WORK_ORDER_NOTE_ADDED", id, request, statusDetail(current.getStatus(),
                 current.getStatus()));
-        return detail(workOrderStore.findById(id).orElseThrow(WorkOrderService::notFound));
+        return detail(workOrderStore.findById(id).orElseThrow(WorkOrderService::notFound), authentication);
     }
 
     public List<Map<String, Object>> assignees(Authentication authentication) {
@@ -383,7 +364,7 @@ public class WorkOrderService {
         return assigneeDirectory.list();
     }
 
-    public Map<String, Object> detail(WorkOrderRecord record) {
+    public Map<String, Object> detail(WorkOrderRecord record, Authentication authentication) {
         AlertRecord alert = requireAlert(record.getAlertId());
         Map<String, Object> result = new LinkedHashMap<String, Object>();
         result.put("id", record.getId());
@@ -414,16 +395,32 @@ public class WorkOrderService {
         List<Map<String, Object>> reviewCandidates = resolutionCandidates(record);
         result.put("resolutionReviewCandidates", reviewCandidates);
         result.put("resolutionReview", resolutionReview(record, reviewCandidates));
-        Map<String, Object> actions = new LinkedHashMap<String, Object>();
-        actions.put("canAssignSelf", record.getStatus() == WorkOrderStatus.OPEN
-                && !isTerminal(record.getStatus()));
-        actions.put("canClaim", record.getStatus() == WorkOrderStatus.OPEN);
-        actions.put("canStart", record.getStatus() == WorkOrderStatus.ASSIGNED);
-        actions.put("canResolve", record.getStatus() == WorkOrderStatus.IN_PROGRESS);
-        actions.put("canCancel", !record.getStatus().isTerminal());
-        actions.put("canAddNote", !record.getStatus().isTerminal());
+        Map<String, Object> actions = actions(record, authentication);
         result.put("actions", actions);
         return result;
+    }
+
+    private Map<String, Object> actions(WorkOrderRecord record, Authentication authentication) {
+        boolean terminal = record.getStatus().isTerminal();
+        boolean admin = isAdmin(authentication);
+        boolean reviewer = isReviewer(authentication);
+        boolean assignedToMe = actor(authentication).equals(record.getAssigneeId());
+        boolean canHandle = admin || assignedToMe;
+        boolean open = record.getStatus() == WorkOrderStatus.OPEN;
+        boolean assignable = record.getStatus() == WorkOrderStatus.OPEN
+                || record.getStatus() == WorkOrderStatus.ASSIGNED;
+
+        Map<String, Object> actions = new LinkedHashMap<String, Object>();
+        actions.put("canAssign", !terminal && admin && assignable);
+        actions.put("canAssignSelf", !terminal && open
+                && reviewer && "REVIEWER".equals(record.getAssignRole()));
+        actions.put("canClaim", !terminal && open
+                && (admin || (reviewer && "REVIEWER".equals(record.getAssignRole()))));
+        actions.put("canStart", !terminal && record.getStatus() == WorkOrderStatus.ASSIGNED && canHandle);
+        actions.put("canResolve", !terminal && record.getStatus() == WorkOrderStatus.IN_PROGRESS && canHandle);
+        actions.put("canCancel", !terminal && admin);
+        actions.put("canAddNote", !terminal && canHandle);
+        return actions;
     }
 
     private Map<String, Object> summary(WorkOrderRecord record) {
@@ -568,14 +565,6 @@ public class WorkOrderService {
         }
     }
 
-    private String json(WorkOrderConfigSnapshot snapshot) {
-        try {
-            return objectMapper.writeValueAsString(snapshot);
-        } catch (Exception exception) {
-            throw new IllegalStateException("unable to serialize work order config snapshot", exception);
-        }
-    }
-
     private Map<String, Object> statusDetail(WorkOrderStatus from, WorkOrderStatus to) {
         Map<String, Object> detail = new LinkedHashMap<String, Object>();
         detail.put("fromStatus", from.name());
@@ -621,13 +610,6 @@ public class WorkOrderService {
 
     private boolean isActionable(AlertRecord alert) {
         return alert.getAlertStatus() == AlertStatus.OPEN || alert.getAlertStatus() == AlertStatus.REVIEWING;
-    }
-
-    private void requireActionableAlert(AlertRecord alert) {
-        if (!isActionable(alert)) {
-            throw new ApiException(HttpStatus.CONFLICT, "ALERT_NOT_ACTIONABLE",
-                    "只有 OPEN 或 REVIEWING 告警可以转工单");
-        }
     }
 
     private String normalizeNote(String note, boolean required) {

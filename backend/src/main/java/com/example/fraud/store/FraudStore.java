@@ -24,6 +24,10 @@ public interface FraudStore {
     List<AlertRecord> findAlerts(AlertStatus status, RiskLevel riskLevel, int offset, int size);
     long countAlerts(AlertStatus status, RiskLevel riskLevel);
     Optional<AlertRecord> findAlert(long alertId);
+
+    /** MySQL: SELECT ... FOR UPDATE；Stub: 与复核共用同一锁。必须在事务内调用。 */
+    Optional<AlertRecord> findAlertForUpdate(long alertId);
+
     List<ReviewRecord> findReviews(long alertId);
     ReviewResponse review(long alertId, String reviewerId, ReviewResult result,
                           String comment, int expectedVersion);

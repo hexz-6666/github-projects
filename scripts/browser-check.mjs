@@ -11,6 +11,7 @@ fs.mkdirSync(outputDir, { recursive: true })
 
 const base = 'http://127.0.0.1:5173'
 const demoPassword = 'Reviewer-Demo-2026!'
+const adminPassword = 'Admin-Demo-2026!'
 const rememberKey = 'fraud_demo.remembered_username'
 const errors = []
 const expectedHealthResponses = []
@@ -338,6 +339,24 @@ async function waitForNoLoading(page, loadingText) {
   await page.waitForFunction((text) => !document.body.innerText.includes(text), loadingText)
 }
 
+async function switchUser(username, password) {
+  const csrf = await page.evaluate(async () => {
+    const response = await fetch('/api/v2/auth/csrf', { credentials: 'same-origin' })
+    return response.json()
+  })
+  const status = await page.evaluate(async ({ username, password, token, header }) => {
+    const response = await fetch('/api/v2/auth/login', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', [header]: token },
+      body: JSON.stringify({ username, password }),
+    })
+    return response.status
+  }, { username, password, token: csrf.token, header: csrf.headerName })
+  assert(status === 200, `Switch to ${username} failed (HTTP ${status})`)
+  await page.reload({ waitUntil: 'networkidle' })
+}
+
 const browser = await chromium.launch({
   executablePath: process.env.BROWSER_EXECUTABLE || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
   headless: true,
@@ -553,6 +572,44 @@ try {
   await page.locator('.facts .status').getByText('RESOLVED', { exact: true }).waitFor()
   await capture(page, 'ui-v3-work-order-detail-1440.png', 'Desktop work order detail')
 
+  // M2 cancel: admin-only, explicit irreversible confirmation. Dismissing the
+  // in-page dialog must send no /transitions request; confirming sends exactly one.
+  await switchUser('demo_admin', adminPassword)
+  await navigateDesktop(page, '异常队列', '异常队列')
+  await waitForNoLoading(page, '正在加载告警')
+  await page.locator('tbody tr').filter({ hasText: 'DEMO-O-0001' }).first().getByRole('button').click()
+  await page.getByRole('heading', { name: /告警详情/ }).waitFor()
+  await page.getByTestId('config-select').selectOption(String(browserConfigId))
+  await page.getByRole('button', { name: '创建工单', exact: true }).click()
+  await page.getByRole('heading', { name: /工单 #/ }).waitFor()
+
+  let cancelTransitionRequests = 0
+  const countCancelTransition = (request) => {
+    if (request.method() === 'POST' && request.url().includes('/transitions')) {
+      cancelTransitionRequests += 1
+    }
+  }
+  page.on('request', countCancelTransition)
+  await page.getByTestId('cancel-note').fill('M2 浏览器验收：取消不可恢复')
+  await page.getByRole('button', { name: '取消工单', exact: true }).click()
+  await page.getByTestId('cancel-confirm-submit').waitFor()
+  assert(await page.getByTestId('cancel-confirm-submit').isVisible(),
+    'Cancel confirmation dialog did not open')
+  await page.getByTestId('cancel-confirm-back').click()
+  await page.getByTestId('cancel-confirm-submit').waitFor({ state: 'detached' })
+  assert(cancelTransitionRequests === 0, 'Dismissing cancel confirmation sent a transition request')
+  assert((await page.locator('.facts .status').innerText()).includes('OPEN'),
+    'Dismissing cancel confirmation changed the work-order status')
+
+  await page.getByRole('button', { name: '取消工单', exact: true }).click()
+  await page.getByTestId('cancel-confirm-submit').click()
+  await page.locator('.facts .status').getByText('CANCELLED', { exact: true }).waitFor()
+  assert(cancelTransitionRequests === 1,
+    `Confirming cancel sent ${cancelTransitionRequests} transition requests`)
+  page.off('request', countCancelTransition)
+  await capture(page, 'ui-v3-work-order-cancel-1440.png', 'Cancelled work order')
+  await switchUser('demo_reviewer', demoPassword)
+
   await navigateDesktop(page, '工单配置', '工单配置')
   await waitForNoLoading(page, '正在加载工单配置')
   assert((await page.getByRole('button', { name: '新建配置', exact: true }).count()) === 0,
@@ -605,6 +662,17 @@ try {
   assert(collapsedShell.workspace.left >= collapsedShell.sidebar.right - 1, 'Collapsed workspace overlaps sidebar')
   await page.screenshot({ path: `${outputDir}/ui-v3-shell-collapsed-1440.png`, fullPage: true })
   await page.getByRole('button', { name: '展开侧栏' }).click()
+
+  // Compact desktop widths and a short viewport: 901-980px is the narrowest
+  // non-drawer band and must not introduce document-level horizontal overflow.
+  for (const width of [901, 940, 980]) {
+    await page.setViewportSize({ width, height: 600 })
+    await navigateDesktop(page, '工单队列', '工单队列')
+    await waitForNoLoading(page, '正在加载工单')
+    await noHorizontalOverflow(page, `Work orders at ${width}px`)
+    await capture(page, `ui-v3-work-orders-${width}.png`, `Work orders at ${width}px`)
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 })
 
   // Mobile: drawer is fully off-canvas before any interaction.
   await page.setViewportSize({ width: 390, height: 844 })
@@ -683,7 +751,7 @@ try {
     sessionRotation: 'passed (second login changed JSESSIONID)',
     logoutInvalidation: 'passed (old JSESSIONID returns 401)',
     fivePages: 'passed (orders filter/reset, alerts filter + detail review, quality read-only, models read-only, health refresh)',
-    m2WorkOrders: 'passed (explicit alert conversion, claim/start/resolve, read-only config preview, queue/detail at 1440 and 390)',
+    m2WorkOrders: 'passed (explicit alert conversion, claim/start/resolve, cancel dismissal/confirmation, read-only config preview, queue/detail at 1440/901/940/980/390)',
     shellStyles: 'passed (scoped page-head/filters/table/card; screenshots at 1440 and 390)',
     drawer: 'passed (off-canvas, aria-expanded/controls, inert/aria-hidden, focus return, backdrop/Escape/button/nav close)',
     keyboard: 'passed (keyboard open, Escape close, closed drawer not tabbable)',

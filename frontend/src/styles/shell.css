@@ -924,6 +924,52 @@ summary:focus-visible {
   color: #a33b35 !important;
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(12 31 23 / 52%);
+}
+
+.confirm-dialog {
+  width: min(480px, 100%);
+  padding: 1.15rem;
+  border: 1px solid #e1e9e3;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 22px 60px rgb(12 31 23 / 25%);
+}
+
+.confirm-dialog h2 {
+  margin: 0 0 0.6rem;
+  color: #18382b;
+  font-size: 1.05rem;
+}
+
+.confirm-dialog p {
+  margin: 0 0 0.6rem;
+  color: #405b4a;
+  font-size: 0.86rem;
+  line-height: 1.7;
+}
+
+.confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.danger-button {
+  border-color: #a33b35 !important;
+  background: #a33b35 !important;
+  color: #fff !important;
+}
+
 .tabs {
   display: flex;
   flex-wrap: wrap;

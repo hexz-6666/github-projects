@@ -154,6 +154,15 @@ public class StubFraudStore implements FraudStore {
     }
 
     @Override
+    public Optional<AlertRecord> findAlertForUpdate(long alertId) {
+        // Stub has no DB transaction; the create writer serializes stub creation
+        // and this read shares the review lock with review().
+        synchronized (reviewLock) {
+            return Optional.ofNullable(alerts.get(alertId));
+        }
+    }
+
+    @Override
     public List<ReviewRecord> findReviews(long alertId) {
         synchronized (reviewLock) {
             return reviews.stream().filter(review -> review.getAlertId() == alertId)

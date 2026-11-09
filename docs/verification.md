@@ -8,7 +8,7 @@
 - MySQL 8.0 服务与 3306 端口存在，但**没有可用演示账号**，未猜密码。
 - 无 Docker/Kafka/Hadoop/Kubernetes；无生产 IAM、TLS、KMS、备份恢复实战。
 - v2 代码已实现五页、会话认证/RBAC/CSRF、导入/质量/审计、IEEE 训练评测；v1 契约保持。
-- v3 M1 已实现登录页/记住账号/紧凑壳层和现有五页适配；M1 未新增后端、API、数据库迁移、工单、日志中心、看板或 ECharts。**2026-11-09 增补 M2：工单/配置 API、V4（仅静态）、工单前端与浏览器流程；M3 尚未开始。**
+- v3 M1 已实现登录页/记住账号/紧凑壳层和现有五页适配；M1 未新增后端、API、数据库迁移、工单、日志中心、看板或 ECharts。**2026-11-09 增补 M2：工单/配置 API、V4（仅静态）、工单前端与浏览器流程；随后完成 M2 corrective patch（建单行锁/幂等顺序、组合外键、服务端 actions、取消确认、验收测试）；M3 尚未开始。**
 
 ## 2. 自动化构建与测试
 
@@ -23,7 +23,7 @@
 | 项目 | 实际结果 | 范围 |
 |---|---|---|
 | Python pytest | **40 passed**，1 条 Starlette `BlockingPortal` 弃用警告 | v1 32 + v2 训练/评测 8 |
-| Java Maven test（M1 当时） | **33 passed，0 failures/errors** | ApiContract 14 + ModelClient 11 + V2ApiTest 8；M2 后最新为 45 passed，见 §8 |
+| Java Maven test（M1 当时） | **33 passed，0 failures/errors** | ApiContract 14 + ModelClient 11 + V2ApiTest 8；M2 corrective patch 后最新为 **50 passed**，见 §8 |
 | Vue production build（M1 收尾最终） | **通过**，2060 modules，JS **117.47 kB / gzip 42.62 kB**，CSS **19.49 kB / gzip 5.11 kB**，登录 WebP 33.99 kB | Vue 3.5.45 / Vite 6.4.5 |
 | M1 收尾前检查点 | 2060 modules，JS 116.84 kB / gzip 42.40 kB，CSS 19.36 kB / gzip 5.09 kB | 收尾增加焦点/ARIA/作用域样式后为上一行最终值 |
 | `npm audit --audit-level=moderate` | **0 vulnerabilities** | 仅前端锁定依赖，不等于 Java/Python 全依赖无漏洞 |
@@ -119,7 +119,7 @@ M1 收尾通过断言：
 
 ### MySQL（明确未验收）
 
-- **未执行** V1/V2/V3、`verify_synthetic.sql`；未验证 6+6 张表、约束、索引、外键、JSON、UTC、导入、事务、并发幂等。
+- **未执行** V1/V2/V3/V4、`verify_synthetic.sql`；未验证 6+6+4 张表、约束、索引、外键、JSON、UTC、导入、事务、并发幂等。
 - 未达到 200 `UP`；`storageMode=mysql` 的真实连接/查询/评分/复核未运行。
 - 阻塞原因：无用户提供的独立演示库最小权限账号。端口开放不等于可登录。
 - 获得凭据后按 [database/README.md](../database/README.md) 与 [deployment.md](deployment.md) 执行，再更新本文件与验收清单。
@@ -134,18 +134,20 @@ M1 收尾通过断言：
 - JDK 8 + Spring Boot 2.7.18 已结束公开维护；未做 Java/Python 全依赖漏洞扫描。
 - 浏览器断言不是完整 WCAG/视觉审计；人工 Ctrl+C 路径未模拟。
 
-## 8. 2026-11-09 M2 增补
+## 8. 2026-11-09 M2 增补与 corrective patch
 
 本节只记录 M2 的实际执行结果；M1 的 33 条 Java 结果是当时快照。
 
 | 项目 | 实际结果 |
 |---|---|
-| Java 全量 `mvn test` | **45 passed，0 failures/errors，0 skipped**；包含 M2ConfigApiTest、M2WorkOrderApiTest |
+| Java 全量 `mvn test` | **50 passed，0 failures/errors，0 skipped**；包含 M2ConfigApiTest 6、M2WorkOrderApiTest 11 |
 | Python `pytest model-service -q` | **40 passed**，1 条 Starlette 弃用警告 |
-| Vue production build | **通过**；2063 modules；JS 152.63 kB / gzip 51.55 kB；CSS 22.57 kB / gzip 5.82 kB |
-| Browser `browser-check.mjs` | **通过**；1440/390 的 M1 五页回归 + M2 转单/领取/开始/完成 + 只读配置预览 + 队列/详情；`pageErrors=[]`；无横向溢出 |
-| MySQL V4 | **未执行、未验证**；无可用演示账号，只做静态审查 |
+| Vue production build | **通过**；2063 modules；JS 153.45 kB / gzip 51.74 kB；CSS 23.19 kB / gzip 5.95 kB |
+| Browser `browser-check.mjs` | **通过**；1440/901/940/980/390 视口；M1 五页回归 + M2 转单/领取/开始/完成/取消确认 + 只读配置预览 + 队列/详情；`pageErrors=[]`；无横向溢出 |
+| MySQL V4 | **未执行、未验证**；无可用演示账号；`M2MysqlIT` 仅在设置 `DB_URL` 时运行，未运行 |
 
-M2 浏览器实际覆盖：告警详情显式选择配置、创建工单、领取、开始、填写结论完成、工单详情与队列、非 ADMIN 只读配置页及“预览匹配”；M1 原有订单筛选/告警复核/质量/模型/健康/抽屉/记住账号断言继续通过。
+M2 浏览器实际覆盖：告警详情显式选择配置、创建工单、领取、开始、填写结论完成、工单详情与队列、非 ADMIN 只读配置页及“预览匹配”；ADMIN 取消工单时点击“返回”不发送 `/transitions`，点击“确认取消”只发送一次并进入 `CANCELLED`；901/940/980px 窄桌面与短视口无文档级横向溢出；M1 原有订单筛选/告警复核/质量/模型/健康/抽屉/记住账号断言继续通过。
 
-M2 新增 API 契约见 [api-contract-v3-work-orders.md](api-contract-v3-work-orders.md)。截图新增 `runtime/ui-v3-work-order-detail-1440.png`、`runtime/ui-v3-work-order-configs-1440.png`、`runtime/ui-v3-work-orders-1440.png` 及对应 390 版本；仍不声称人工视觉审阅。
+M2 corrective patch 新增测试：同配置幂等优先于“配置已停用/告警已解决”；`alertWorkOrders` 能查到第 100 条之后的旧工单；详情 `actions` 按角色/处理人/终态计算；两个并发建单只产生一个新建和一个幂等；M2 匿名 401、缺失 CSRF 403。MySQL 门控测试覆盖组合唯一键/外键元数据，以及错误版本三元组、跨告警复核被数据库拒绝。
+
+M2 新增 API 契约见 [api-contract-v3-work-orders.md](api-contract-v3-work-orders.md)。截图新增 `runtime/ui-v3-work-order-detail-1440.png`、`runtime/ui-v3-work-order-cancel-1440.png`、`runtime/ui-v3-work-order-configs-1440.png`、`runtime/ui-v3-work-orders-1440.png`、`ui-v3-work-orders-901/940/980.png` 及对应 390 版本；仍不声称人工视觉审阅。

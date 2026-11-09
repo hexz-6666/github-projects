@@ -17,24 +17,21 @@ const assignees = ref([])
 const selectedAssignee = ref('')
 const noteText = ref('')
 const cancelText = ref('')
+const cancelConfirmOpen = ref(false)
 const resolutionReviewId = ref('')
 
 const roles = computed(() => props.user?.roles || [])
 const isAdmin = computed(() => roles.value.includes('ADMIN'))
-const isReviewer = computed(() => roles.value.includes('REVIEWER'))
 const currentUser = computed(() => props.user?.username || '')
-const isAssignedToMe = computed(() => detail.value?.assigneeId === currentUser.value)
-const canHandle = computed(() => isAdmin.value || isAssignedToMe.value)
-const terminal = computed(() => ['RESOLVED', 'CANCELLED'].includes(detail.value?.status))
-const canClaim = computed(() => detail.value?.status === 'OPEN'
-  && (isAdmin.value || (isReviewer.value && detail.value?.assignRole === 'REVIEWER')))
-const canAssignSelf = computed(() => isReviewer.value && detail.value?.status === 'OPEN'
-  && detail.value?.assignRole === 'REVIEWER')
-const canAssign = computed(() => isAdmin.value && ['OPEN', 'ASSIGNED'].includes(detail.value?.status))
-const canStart = computed(() => detail.value?.status === 'ASSIGNED' && canHandle.value)
-const canResolve = computed(() => detail.value?.status === 'IN_PROGRESS' && canHandle.value)
-const canCancel = computed(() => isAdmin.value && !terminal.value)
-const canNote = computed(() => !terminal.value && canHandle.value)
+// The server is authoritative for role/assignee/assignRole/terminal actions;
+// do not duplicate the permission matrix in Vue.
+const canClaim = computed(() => detail.value?.actions?.canClaim === true)
+const canAssignSelf = computed(() => detail.value?.actions?.canAssignSelf === true)
+const canAssign = computed(() => detail.value?.actions?.canAssign === true)
+const canStart = computed(() => detail.value?.actions?.canStart === true)
+const canResolve = computed(() => detail.value?.actions?.canResolve === true)
+const canCancel = computed(() => detail.value?.actions?.canCancel === true)
+const canNote = computed(() => detail.value?.actions?.canAddNote === true)
 
 const slaLabels = {
   ON_TRACK: '按期',
@@ -131,13 +128,28 @@ async function resolve() {
   noteText.value = ''
 }
 
-async function cancel() {
+function cancel() {
+  if (busy.value) return
   if (!cancelText.value.trim()) {
     error.value = '取消工单必须填写取消原因。'
     return
   }
+  // Do not send anything until the user explicitly confirms the irreversible
+  // terminal transition in the dialog below.
+  cancelConfirmOpen.value = true
+}
+
+function dismissCancel() {
+  cancelConfirmOpen.value = false
+}
+
+async function confirmCancel() {
+  if (busy.value) return
+  cancelConfirmOpen.value = false
   await transition('CANCEL', { note: cancelText.value })
-  cancelText.value = ''
+  if (detail.value?.status === 'CANCELLED') {
+    cancelText.value = ''
+  }
 }
 
 async function addNote() {
@@ -346,6 +358,22 @@ onMounted(load)
           </div>
         </div>
       </article>
+
+      <div v-if="cancelConfirmOpen" class="modal-backdrop" @click.self="dismissCancel">
+        <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="cancel-confirm-title">
+          <h2 id="cancel-confirm-title">确认取消工单</h2>
+          <p>取消后工单进入 <strong>CANCELLED</strong> 终态，<strong>不可恢复、不可重新打开</strong>。</p>
+          <p class="muted">取消原因：{{ cancelText }}</p>
+          <div class="confirm-actions">
+            <button type="button" class="ghost" data-testid="cancel-confirm-back" :disabled="busy" @click="dismissCancel">
+              返回
+            </button>
+            <button type="button" class="primary danger-button" data-testid="cancel-confirm-submit" :disabled="busy" @click="confirmCancel">
+              确认取消
+            </button>
+          </div>
+        </div>
+      </div>
     </template>
   </section>
 </template>

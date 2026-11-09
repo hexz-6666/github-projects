@@ -1,9 +1,19 @@
 package com.example.fraud;
 
+import com.example.fraud.domain.WorkOrderRecord;
+import com.example.fraud.domain.WorkOrderStatus;
+import com.example.fraud.store.WorkOrderStore;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -32,6 +42,9 @@ class M2WorkOrderApiTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private WorkOrderStore workOrderStore;
 
     @Test
     void createIsExplicitIdempotentAndDifferentConfigIsConflict() throws Exception {
@@ -307,6 +320,147 @@ class M2WorkOrderApiTest {
                         .content("{\"configId\":" + config + ",\"operatorId\":\"spoof\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void idempotentCreateSurvivesDisabledConfigAndResolvedAlert() throws Exception {
+        long config = publishedConfig("M2_WO_IDEMPOTENT", "0.3", "[\"LOW\"]", false);
+        long workOrderId = createWorkOrderAndId(2, config, "demo_reviewer", "REVIEWER");
+
+        mvc.perform(post("/api/v3/work-order-configs/" + config + "/disable").with(csrf())
+                        .with(user("demo_admin").roles("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"expectedVersion\":2}"))
+                .andExpect(status().isOk());
+
+        mvc.perform(post("/api/v3/alerts/2/work-orders").with(csrf())
+                        .with(user("demo_reviewer").roles("REVIEWER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"configId\":" + config + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(workOrderId))
+                .andExpect(jsonPath("$.idempotent").value(true));
+
+        mvc.perform(post("/api/v1/alerts/2/reviews").with(csrf())
+                        .with(user("demo_reviewer").roles("REVIEWER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reviewResult\":\"CONFIRMED\",\"expectedVersion\":1}"))
+                .andExpect(status().isCreated());
+
+        mvc.perform(post("/api/v3/alerts/2/work-orders").with(csrf())
+                        .with(user("demo_reviewer").roles("REVIEWER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"configId\":" + config + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(workOrderId))
+                .andExpect(jsonPath("$.idempotent").value(true));
+    }
+
+    @Test
+    void detailActionsRespectRoleAssigneeAndTerminalState() throws Exception {
+        long config = publishedConfig("M2_WO_ACTIONS", "0.3", "[\"LOW\"]", false);
+        MvcResult created = createWorkOrder(2, config, "demo_reviewer", "REVIEWER")
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.actions.canClaim").value(true))
+                .andExpect(jsonPath("$.actions.canAssignSelf").value(true))
+                .andExpect(jsonPath("$.actions.canAssign").value(false))
+                .andExpect(jsonPath("$.actions.canStart").value(false))
+                .andExpect(jsonPath("$.actions.canResolve").value(false))
+                .andExpect(jsonPath("$.actions.canCancel").value(false))
+                .andExpect(jsonPath("$.actions.canAddNote").value(false))
+                .andReturn();
+        long workOrderId = objectMapper.readTree(created.getResponse().getContentAsString())
+                .get("id").asLong();
+
+        mvc.perform(post("/api/v3/work-orders/" + workOrderId + "/transitions").with(csrf())
+                        .with(user("demo_reviewer").roles("REVIEWER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"transition\":\"CLAIM\",\"expectedVersion\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.actions.canClaim").value(false))
+                .andExpect(jsonPath("$.actions.canStart").value(true))
+                .andExpect(jsonPath("$.actions.canAddNote").value(true))
+                .andExpect(jsonPath("$.actions.canCancel").value(false));
+
+        mvc.perform(get("/api/v3/work-orders/" + workOrderId)
+                        .with(user("demo_admin").roles("ADMIN")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.actions.canAssign").value(true))
+                .andExpect(jsonPath("$.actions.canStart").value(true))
+                .andExpect(jsonPath("$.actions.canAddNote").value(true))
+                .andExpect(jsonPath("$.actions.canCancel").value(true))
+                .andExpect(jsonPath("$.actions.canClaim").value(false))
+                .andExpect(jsonPath("$.actions.canAssignSelf").value(false));
+    }
+
+    @Test
+    void alertWorkOrdersFindsOldRecordBeyondFirstHundred() throws Exception {
+        Instant old = Instant.parse("2020-01-01T00:00:00Z");
+        workOrderStore.insert(record(1L, old));
+        for (int i = 0; i < 100; i++) {
+            workOrderStore.insert(record(1000L + i, old.plusSeconds(60L + i)));
+        }
+
+        mvc.perform(get("/api/v3/alerts/1/work-orders")
+                        .with(user("demo_reviewer").roles("REVIEWER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].alertId").value(1));
+    }
+
+    @Test
+    void concurrentCreateReturnsOneCreatedAndOneIdempotent() throws Exception {
+        long config = publishedConfig("M2_WO_CONCURRENT", "0.3", "[\"LOW\"]", false);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<Integer>> futures = new ArrayList<Future<Integer>>();
+        for (int i = 0; i < 2; i++) {
+            futures.add(pool.submit(() -> {
+                start.await(5, TimeUnit.SECONDS);
+                return createWorkOrder(2, config, "demo_reviewer", "REVIEWER")
+                        .andReturn().getResponse().getStatus();
+            }));
+        }
+        start.countDown();
+        List<Integer> statuses = new ArrayList<Integer>();
+        for (Future<Integer> future : futures) {
+            statuses.add(future.get(10, TimeUnit.SECONDS));
+        }
+        pool.shutdown();
+        assertTrue(pool.awaitTermination(10, TimeUnit.SECONDS), "concurrent create pool must terminate");
+        java.util.Collections.sort(statuses);
+        org.junit.jupiter.api.Assertions.assertEquals(
+                java.util.Arrays.asList(200, 201), statuses);
+    }
+
+    @Test
+    void m2EndpointsRequireAuthenticationAndCsrf() throws Exception {
+        mvc.perform(get("/api/v3/work-orders"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
+        mvc.perform(get("/api/v3/work-order-configs"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
+
+        mvc.perform(post("/api/v3/work-order-configs")
+                        .with(user("demo_admin").roles("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("CSRF_INVALID"));
+        mvc.perform(post("/api/v3/alerts/1/work-orders")
+                        .with(user("demo_reviewer").roles("REVIEWER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"configId\":1}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("CSRF_INVALID"));
+    }
+
+    private WorkOrderRecord record(long alertId, Instant createdAt) {
+        Instant now = Instant.now();
+        return new WorkOrderRecord(0L, alertId, 1L, 1L, 1, "{}", "REVIEWER", null,
+                WorkOrderStatus.OPEN, false, 120, now.plusSeconds(7200L), null, null, null,
+                1, "seed", "seed", createdAt, createdAt);
     }
 
     private long createWorkOrderAndId(long alertId, long configId, String username, String role)

@@ -63,10 +63,8 @@ CREATE TABLE IF NOT EXISTS work_order_config_version (
     CONSTRAINT ck_wocv_threshold CHECK (risk_score_threshold BETWEEN 0 AND 1)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Both tables exist now; add the circular published-version pointer explicitly.
-ALTER TABLE work_order_config
-    ADD CONSTRAINT fk_woc_published_version FOREIGN KEY (id, published_version)
-        REFERENCES work_order_config_version (config_id, version_no);
+-- 约束/索引统一在文件末尾用 information_schema 守卫添加，保证干净库和已执行库可重复执行。
+-- 不在这里无条件 ADD CONSTRAINT：重复执行会失败。
 
 CREATE TABLE IF NOT EXISTS work_order (
     id BIGINT NOT NULL AUTO_INCREMENT,
@@ -141,3 +139,83 @@ CREATE TABLE IF NOT EXISTS work_order_event (
     CONSTRAINT ck_woe_to CHECK (to_status IS NULL OR to_status IN ('OPEN','ASSIGNED','IN_PROGRESS','RESOLVED','CANCELLED')),
     CONSTRAINT ck_woe_role CHECK (actor_role IN ('ANALYST','REVIEWER','ADMIN'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ---------------------------------------------------------------------------
+-- Idempotent constraint guards (MySQL 8.0.16+).
+-- The mysql client executes this file with `source`; no Flyway/Liquibase schema
+-- history exists. Each DDL is guarded by information_schema so a clean database
+-- and a previously executed/partially executed database both converge safely.
+-- No table is dropped and no row is deleted.
+-- ---------------------------------------------------------------------------
+
+-- P1-1: the referenced review must belong to the same alert as the work order.
+SET @ddl = (
+    SELECT IF(COUNT(*) = 0,
+        'ALTER TABLE ads_alert_review ADD UNIQUE KEY uk_review_id_alert (review_id, alert_id)',
+        'SELECT 1')
+    FROM information_schema.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'ads_alert_review'
+      AND INDEX_NAME = 'uk_review_id_alert'
+);
+PREPARE v4_stmt FROM @ddl;
+EXECUTE v4_stmt;
+DEALLOCATE PREPARE v4_stmt;
+
+-- The composite version key is needed by the three-column consistency FK.
+SET @ddl = (
+    SELECT IF(COUNT(*) = 0,
+        'ALTER TABLE work_order_config_version ADD UNIQUE KEY uk_wocv_id_config_version (id, config_id, version_no)',
+        'SELECT 1')
+    FROM information_schema.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'work_order_config_version'
+      AND INDEX_NAME = 'uk_wocv_id_config_version'
+);
+PREPARE v4_stmt FROM @ddl;
+EXECUTE v4_stmt;
+DEALLOCATE PREPARE v4_stmt;
+
+-- Circular pointer: config -> its last published immutable version.
+SET @ddl = (
+    SELECT IF(COUNT(*) = 0,
+        'ALTER TABLE work_order_config ADD CONSTRAINT fk_woc_published_version FOREIGN KEY (id, published_version) REFERENCES work_order_config_version (config_id, version_no)',
+        'SELECT 1')
+    FROM information_schema.TABLE_CONSTRAINTS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'work_order_config'
+      AND CONSTRAINT_NAME = 'fk_woc_published_version'
+);
+PREPARE v4_stmt FROM @ddl;
+EXECUTE v4_stmt;
+DEALLOCATE PREPARE v4_stmt;
+
+-- P1-2: config_version_id, config_id and config_version_no must identify the
+-- same immutable version row. The existing single/two-column FKs are retained
+-- for compatibility; this three-column FK is the authoritative consistency guard.
+SET @ddl = (
+    SELECT IF(COUNT(*) = 0,
+        'ALTER TABLE work_order ADD CONSTRAINT fk_wo_config_version_consistent FOREIGN KEY (config_version_id, config_id, config_version_no) REFERENCES work_order_config_version (id, config_id, version_no)',
+        'SELECT 1')
+    FROM information_schema.TABLE_CONSTRAINTS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'work_order'
+      AND CONSTRAINT_NAME = 'fk_wo_config_version_consistent'
+);
+PREPARE v4_stmt FROM @ddl;
+EXECUTE v4_stmt;
+DEALLOCATE PREPARE v4_stmt;
+
+-- P1-1: DB-level same-alert guard for RESOLVED work orders.
+SET @ddl = (
+    SELECT IF(COUNT(*) = 0,
+        'ALTER TABLE work_order ADD CONSTRAINT fk_wo_resolution_review_alert FOREIGN KEY (resolution_review_id, alert_id) REFERENCES ads_alert_review (review_id, alert_id)',
+        'SELECT 1')
+    FROM information_schema.TABLE_CONSTRAINTS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'work_order'
+      AND CONSTRAINT_NAME = 'fk_wo_resolution_review_alert'
+);
+PREPARE v4_stmt FROM @ddl;
+EXECUTE v4_stmt;
+DEALLOCATE PREPARE v4_stmt;

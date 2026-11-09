@@ -213,6 +213,12 @@ public class MysqlFraudStore implements FraudStore {
     }
 
     @Override
+    public Optional<AlertRecord> findAlertForUpdate(long alertId) {
+        return jdbc.query(ALERT_SELECT + "WHERE a.alert_id=? FOR UPDATE", alertMapper(), alertId)
+                .stream().findFirst();
+    }
+
+    @Override
     public List<ReviewRecord> findReviews(long alertId) {
         return jdbc.query("SELECT review_id,alert_id,reviewer_id,review_result,comment," +
                         "previous_status,new_status,created_at FROM ads_alert_review WHERE alert_id=? " +

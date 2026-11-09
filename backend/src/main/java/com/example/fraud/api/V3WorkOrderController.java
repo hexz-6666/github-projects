@@ -67,7 +67,7 @@ public class V3WorkOrderController {
                                                        HttpServletRequest servletRequest) {
         WorkOrderService.CreateResult result = service.create(alertId, request.getConfigId(),
                 authentication, servletRequest);
-        Map<String, Object> body = service.detail(result.getRecord());
+        Map<String, Object> body = service.detail(result.getRecord(), authentication);
         body.put("idempotent", result.isIdempotent());
         long id = result.getRecord().getId();
         return ResponseEntity.status(result.isIdempotent() ? HttpStatus.OK : HttpStatus.CREATED)

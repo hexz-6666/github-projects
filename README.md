@@ -150,9 +150,10 @@ npm --prefix frontend run dev
 database/migrations/V1__init.sql      # 建库、6 张 v1 表
 database/seed/V2__synthetic_demo.sql  # 3 笔虚构订单/评分/告警；非幂等，只执行一次
 database/migrations/V3__v2_sources_eval.sql  # 放开单源限制，新增导入/DQ/审计/模型/评测表
+database/migrations/V4__v3_work_orders.sql   # M2 工单/配置/版本/事件与组合约束
 ```
 
-然后用 `database/verify_synthetic.sql` 核对基础行数。V3 必须在 V1 之后；V2 种子在 V3 前后均可，但推荐按上表顺序。不要重复执行种子。详见 [database/README.md](database/README.md)。
+然后用 `database/verify_synthetic.sql` 核对基础行数。V3 必须在 V1 之后，V4 必须在 V1–V3 之后；V2 种子在 V3 前后均可，但推荐按上表顺序。不要重复执行种子。V4 的约束/索引使用 `information_schema` 守卫，可在干净库或已执行/部分执行的库上重复执行；不要用 `DROP TABLE` 或回滚迁移修复。详见 [database/README.md](database/README.md)。
 
 MySQL 管理账号只做 DDL；应用另建最小权限账号，仅授予 `fraud_demo.*` 的 SELECT/INSERT/UPDATE/DELETE：
 
@@ -175,7 +176,7 @@ try {
 }
 ```
 
-MySQL 与模型均正常时健康才返回 200 `UP`。本机当前**没有**可用演示账号，因此 V1/V3、真实 CRUD、事务和 200 UP **未被声称验证**。
+MySQL 与模型均正常时健康才返回 200 `UP`。本机当前**没有**可用演示账号，因此 V1–V4、真实 CRUD、事务、并发幂等和 200 UP **未被声称验证**。
 
 ## 6. API 与最小调用示例
 
@@ -223,7 +224,7 @@ Invoke-RestMethod "$base/api/v1/alerts/1/reviews" -Method Post -WebSession $sess
 .\scripts\verify.ps1
 ```
 
-运行前停止 `dev.ps1` 启动的后端，避免 Maven 与运行进程共享 `backend/target/classes`。脚本执行 Python 40 项、Java 33 项、Vue 生产构建；不把 MySQL DDL/凭据验证自动算通过。
+运行前停止 `dev.ps1` 启动的后端，避免 Maven 与运行进程共享 `backend/target/classes`。脚本执行 Python 40 项、Java 50 项、Vue 生产构建；不把 MySQL DDL/凭据验证自动算通过。
 
 浏览器验收（可选，不进入生产依赖）：
 
@@ -233,7 +234,7 @@ $env:PLAYWRIGHT_MODULE = "$PWD\runtime\browser-tools\node_modules\playwright-cor
 node scripts\browser-check.mjs
 ```
 
-当前实测：Python 40 passed、Java 33 passed、Vue build 通过、浏览器登录/五页/复核/移动端无溢出。详见 [verification.md](docs/verification.md)。
+当前实测：Python 40 passed、Java 50 passed、Vue build 通过、浏览器登录/五页/复核/M2 工单/取消确认/窄桌面与移动端无溢出。MySQL V4 仍未执行、未验证。详见 [verification.md](docs/verification.md)。
 
 ## 8. 来源许可与安全
 
