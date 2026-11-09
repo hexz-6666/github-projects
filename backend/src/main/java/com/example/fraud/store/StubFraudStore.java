@@ -70,6 +70,15 @@ public class StubFraudStore implements FraudStore {
         alerts.put(1L, new AlertRecord(1, "DEMO-O-0001", 1, AlertStatus.OPEN, RiskLevel.HIGH,
                 seedScore, seedScore.getRuleCodes(), 1, Instant.parse("2026-01-03T08:05:00Z"),
                 Instant.parse("2026-01-03T08:05:00Z")));
+        // M2 第二条合成告警，供浏览器覆盖“取消”路径；不占用 nextScoreId 生成序列。
+        ScoreRecord secondScore = new ScoreRecord(100, "DEMO-O-0002", new BigDecimal("0.3500"),
+                RiskLevel.LOW, "synthetic-rule-v1", "DEMO_RULE", new BigDecimal("0.7000"),
+                Arrays.asList("REPEATED_PAYMENT_ATTEMPTS"),
+                Instant.parse("2026-01-03T09:04:00Z"));
+        scores.add(secondScore);
+        alerts.put(2L, new AlertRecord(2, "DEMO-O-0002", 100, AlertStatus.OPEN, RiskLevel.LOW,
+                secondScore, secondScore.getRuleCodes(), 1, Instant.parse("2026-01-03T09:05:00Z"),
+                Instant.parse("2026-01-03T09:05:00Z")));
     }
 
     @Override

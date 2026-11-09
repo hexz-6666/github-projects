@@ -5,12 +5,14 @@ import {
   AlertTriangle,
   BrainCircuit,
   ChevronRight,
+  ClipboardList,
   Database,
   LogOut,
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
   ReceiptText,
+  Settings2,
   ShieldCheck,
   X,
 } from '@lucide/vue'
@@ -22,6 +24,9 @@ import AlertDetailPage from './pages/AlertDetailPage.vue'
 import DataQualityPage from './pages/DataQualityPage.vue'
 import ModelEvaluationPage from './pages/ModelEvaluationPage.vue'
 import HealthPage from './pages/HealthPage.vue'
+import WorkOrderQueuePage from './pages/WorkOrderQueuePage.vue'
+import WorkOrderDetailPage from './pages/WorkOrderDetailPage.vue'
+import WorkOrderConfigsPage from './pages/WorkOrderConfigsPage.vue'
 
 const user = ref(null)
 const loading = ref(true)
@@ -39,6 +44,13 @@ const navGroups = [
     items: [
       { name: 'orders', label: '订单概览', icon: ReceiptText },
       { name: 'alerts', label: '异常队列', icon: AlertTriangle },
+    ],
+  },
+  {
+    label: '工单处理',
+    items: [
+      { name: 'workorders', label: '工单队列', icon: ClipboardList },
+      { name: 'workorder-configs', label: '工单配置', icon: Settings2 },
     ],
   },
   {
@@ -66,11 +78,16 @@ const pages = {
   quality: DataQualityPage,
   models: ModelEvaluationPage,
   health: HealthPage,
+  workorders: WorkOrderQueuePage,
+  'workorder-configs': WorkOrderConfigsPage,
 }
 
 const page = computed(() => {
   if (route.value.name === 'alerts' && route.value.id) {
     return { component: AlertDetailPage, props: { alertId: route.value.id } }
+  }
+  if (route.value.name === 'workorders' && route.value.id) {
+    return { component: WorkOrderDetailPage, props: { workOrderId: route.value.id } }
   }
   return { component: pages[route.value.name] || OrdersPage, props: {} }
 })
@@ -78,6 +95,9 @@ const page = computed(() => {
 const currentItem = computed(() => {
   if (route.value.name === 'alerts' && route.value.id) {
     return { label: '告警详情', group: '风险业务' }
+  }
+  if (route.value.name === 'workorders' && route.value.id) {
+    return { label: '工单详情', group: '工单处理' }
   }
   for (const group of navGroups) {
     const item = group.items.find((candidate) => candidate.name === route.value.name)

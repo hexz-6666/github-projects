@@ -8,7 +8,7 @@
 - MySQL 8.0 服务与 3306 端口存在，但**没有可用演示账号**，未猜密码。
 - 无 Docker/Kafka/Hadoop/Kubernetes；无生产 IAM、TLS、KMS、备份恢复实战。
 - v2 代码已实现五页、会话认证/RBAC/CSRF、导入/质量/审计、IEEE 训练评测；v1 契约保持。
-- v3 M1 已实现登录页/记住账号/紧凑壳层和现有五页适配；**未新增后端、API、数据库迁移、工单、日志中心、看板或 ECharts**，未开始 M2。
+- v3 M1 已实现登录页/记住账号/紧凑壳层和现有五页适配；M1 未新增后端、API、数据库迁移、工单、日志中心、看板或 ECharts。**2026-11-09 增补 M2：工单/配置 API、V4（仅静态）、工单前端与浏览器流程；M3 尚未开始。**
 
 ## 2. 自动化构建与测试
 
@@ -23,7 +23,7 @@
 | 项目 | 实际结果 | 范围 |
 |---|---|---|
 | Python pytest | **40 passed**，1 条 Starlette `BlockingPortal` 弃用警告 | v1 32 + v2 训练/评测 8 |
-| Java Maven test | **33 passed，0 failures/errors** | ApiContract 14 + ModelClient 11 + V2ApiTest 8 |
+| Java Maven test（M1 当时） | **33 passed，0 failures/errors** | ApiContract 14 + ModelClient 11 + V2ApiTest 8；M2 后最新为 45 passed，见 §8 |
 | Vue production build（M1 收尾最终） | **通过**，2060 modules，JS **117.47 kB / gzip 42.62 kB**，CSS **19.49 kB / gzip 5.11 kB**，登录 WebP 33.99 kB | Vue 3.5.45 / Vite 6.4.5 |
 | M1 收尾前检查点 | 2060 modules，JS 116.84 kB / gzip 42.40 kB，CSS 19.36 kB / gzip 5.09 kB | 收尾增加焦点/ARIA/作用域样式后为上一行最终值 |
 | `npm audit --audit-level=moderate` | **0 vulnerabilities** | 仅前端锁定依赖，不等于 Java/Python 全依赖无漏洞 |
@@ -133,3 +133,19 @@ M1 收尾通过断言：
 - 生产认证、TLS、MFA、限流、会话吊销、密钥管理、审计防篡改、备份恢复演练未实现/未验证。
 - JDK 8 + Spring Boot 2.7.18 已结束公开维护；未做 Java/Python 全依赖漏洞扫描。
 - 浏览器断言不是完整 WCAG/视觉审计；人工 Ctrl+C 路径未模拟。
+
+## 8. 2026-11-09 M2 增补
+
+本节只记录 M2 的实际执行结果；M1 的 33 条 Java 结果是当时快照。
+
+| 项目 | 实际结果 |
+|---|---|
+| Java 全量 `mvn test` | **45 passed，0 failures/errors，0 skipped**；包含 M2ConfigApiTest、M2WorkOrderApiTest |
+| Python `pytest model-service -q` | **40 passed**，1 条 Starlette 弃用警告 |
+| Vue production build | **通过**；2063 modules；JS 152.63 kB / gzip 51.55 kB；CSS 22.57 kB / gzip 5.82 kB |
+| Browser `browser-check.mjs` | **通过**；1440/390 的 M1 五页回归 + M2 转单/领取/开始/完成 + 只读配置预览 + 队列/详情；`pageErrors=[]`；无横向溢出 |
+| MySQL V4 | **未执行、未验证**；无可用演示账号，只做静态审查 |
+
+M2 浏览器实际覆盖：告警详情显式选择配置、创建工单、领取、开始、填写结论完成、工单详情与队列、非 ADMIN 只读配置页及“预览匹配”；M1 原有订单筛选/告警复核/质量/模型/健康/抽屉/记住账号断言继续通过。
+
+M2 新增 API 契约见 [api-contract-v3-work-orders.md](api-contract-v3-work-orders.md)。截图新增 `runtime/ui-v3-work-order-detail-1440.png`、`runtime/ui-v3-work-order-configs-1440.png`、`runtime/ui-v3-work-orders-1440.png` 及对应 390 版本；仍不声称人工视觉审阅。

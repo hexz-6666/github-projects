@@ -14,6 +14,104 @@ const demoPassword = 'Reviewer-Demo-2026!'
 const rememberKey = 'fraud_demo.remembered_username'
 const errors = []
 const expectedHealthResponses = []
+const apiBase = 'http://127.0.0.1:8080'
+let adminCookie = ''
+let adminXsrf = ''
+let adminCsrf = null
+let browserConfigId = null
+
+function adminCookieHeader() {
+  return [adminCookie, adminXsrf ? `XSRF-TOKEN=${adminXsrf}` : ''].filter(Boolean).join('; ')
+}
+
+function captureSessionCookie(response) {
+  const values = typeof response.headers.getSetCookie === 'function'
+    ? response.headers.getSetCookie()
+    : [response.headers.get('set-cookie')].filter(Boolean)
+  for (const value of values) {
+    const session = /JSESSIONID=([^;]+)/.exec(value)
+    if (session) adminCookie = `JSESSIONID=${session[1]}`
+    const xsrf = /XSRF-TOKEN=([^;]+)/.exec(value)
+    if (xsrf) adminXsrf = xsrf[1]
+  }
+}
+
+async function ensureAdminSession() {
+  if (adminCookie && adminCsrf) return
+  const csrfResponse = await fetch(`${apiBase}/api/v2/auth/csrf`, {
+    headers: adminCookie ? { Cookie: adminCookieHeader() } : {},
+  })
+  assert(csrfResponse.ok, `Admin CSRF bootstrap failed (HTTP ${csrfResponse.status})`)
+  captureSessionCookie(csrfResponse)
+  const csrfBody = await csrfResponse.json()
+  adminCsrf = { header: csrfBody.headerName, token: csrfBody.token }
+
+  const loginResponse = await fetch(`${apiBase}/api/v2/auth/login`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      [adminCsrf.header]: adminCsrf.token,
+      ...(adminCookie ? { Cookie: adminCookieHeader() } : {}),
+    },
+    body: JSON.stringify({ username: 'demo_admin', password: 'Admin-Demo-2026!' }),
+  })
+  assert(loginResponse.ok, `Admin login failed (HTTP ${loginResponse.status})`)
+  captureSessionCookie(loginResponse)
+  assert(adminCookie, 'Admin login did not return a JSESSIONID')
+
+  // Login rotates the session; the pre-login CSRF token is no longer valid.
+  const postLoginCsrf = await fetch(`${apiBase}/api/v2/auth/csrf`, {
+    headers: { Cookie: adminCookieHeader() },
+  })
+  assert(postLoginCsrf.ok, `Admin CSRF refresh failed (HTTP ${postLoginCsrf.status})`)
+  captureSessionCookie(postLoginCsrf)
+  const postLoginBody = await postLoginCsrf.json()
+  adminCsrf = { header: postLoginBody.headerName, token: postLoginBody.token }
+}
+
+async function adminRequest(path, method = 'GET', body = null) {
+  await ensureAdminSession()
+  const headers = { ...(adminCookie ? { Cookie: adminCookieHeader() } : {}) }
+  if (body !== null) headers['Content-Type'] = 'application/json'
+  if (method !== 'GET') headers[adminCsrf.header] = adminCsrf.token
+  const response = await fetch(`${apiBase}${path}`, {
+    method,
+    headers,
+    body: body === null ? undefined : JSON.stringify(body),
+  })
+  const text = await response.text()
+  let payload = null
+  try {
+    payload = text ? JSON.parse(text) : null
+  } catch {
+    payload = null
+  }
+  assert(response.ok, `Admin API ${method} ${path} failed (HTTP ${response.status}): ${text}`)
+  return payload
+}
+
+async function createBrowserConfig() {
+  const payload = await adminRequest('/api/v3/work-order-configs', 'POST', {
+    code: `BROWSER_M2_${Date.now()}`,
+    name: '浏览器验收工单配置',
+    description: '仅用于本地浏览器验收，虚构数据。',
+    priority: 3,
+    trigger: {
+      sourceSystems: ['SYNTHETIC'],
+      riskLevels: ['LOW', 'MEDIUM', 'HIGH'],
+      alertStatuses: ['OPEN', 'REVIEWING'],
+      reasonCodes: [],
+    },
+    riskScoreThreshold: 0.3,
+    slaMinutes: 120,
+    requiresReview: false,
+    assignRole: 'REVIEWER',
+  })
+  await adminRequest(`/api/v3/work-order-configs/${payload.id}/publish`, 'POST', {
+    expectedVersion: payload.version,
+  })
+  return payload.id
+}
 
 function assert(condition, message) {
   if (!condition) {
@@ -343,6 +441,7 @@ try {
     storageAfterLogin.local[rememberKey] === 'demo_reviewer',
     'Remembered username was not stored only after successful login',
   )
+  browserConfigId = await createBrowserConfig()
   await capture(page, 'ui-v3-orders-1440.png', 'Desktop orders')
 
   // Orders: filter, reset, and scoped table/filter/header styling.
@@ -441,6 +540,32 @@ try {
   await page.getByText('复核已记录，历史已追加。').waitFor()
   await capture(page, 'ui-v3-alert-detail-1440.png', 'Desktop alert detail')
 
+  // M2: explicit alert conversion, claim/start/resolve, and read-only config preview.
+  await page.getByTestId('config-select').selectOption(String(browserConfigId))
+  await page.getByRole('button', { name: '创建工单', exact: true }).click()
+  await page.getByRole('heading', { name: /工单 #/ }).waitFor()
+  await page.getByRole('button', { name: '领取工单', exact: true }).click()
+  await page.getByRole('button', { name: '开始处理', exact: true }).waitFor()
+  await page.getByRole('button', { name: '开始处理', exact: true }).click()
+  await page.getByTestId('resolution-note').waitFor()
+  await page.getByTestId('resolution-note').fill('M2 浏览器验收：已完成处置')
+  await page.getByTestId('resolve-order').click()
+  await page.locator('.facts .status').getByText('RESOLVED', { exact: true }).waitFor()
+  await capture(page, 'ui-v3-work-order-detail-1440.png', 'Desktop work order detail')
+
+  await navigateDesktop(page, '工单配置', '工单配置')
+  await waitForNoLoading(page, '正在加载工单配置')
+  assert((await page.getByRole('button', { name: '新建配置', exact: true }).count()) === 0,
+    'Reviewer must not see the create-config action')
+  await page.getByRole('button', { name: '预览匹配', exact: true }).click()
+  await page.getByText(/匹配告警数/).waitFor()
+  await capture(page, 'ui-v3-work-order-configs-1440.png', 'Desktop work order configs')
+
+  await navigateDesktop(page, '工单队列', '工单队列')
+  await waitForNoLoading(page, '正在加载工单')
+  assert((await page.locator('tbody tr').count()) >= 1, 'Resolved work order is missing from the queue')
+  await capture(page, 'ui-v3-work-orders-1440.png', 'Desktop work orders')
+
   // Data quality: reviewer sees the read-only import boundary and card styling.
   await navigateDesktop(page, '数据质量', '数据质量')
   await waitForNoLoading(page, '正在加载质量摘要')
@@ -506,6 +631,11 @@ try {
   await assertClosedDrawerTabsStayOutside(page)
 
   await navigateMobile(page, '异常队列', '异常队列', 'ui-v3-alerts-390.png')
+  await navigateMobile(page, '工单队列', '工单队列', 'ui-v3-work-orders-390.png')
+  await page.locator('tbody tr').first().getByRole('button').click()
+  await page.getByRole('heading', { name: /工单 #/ }).waitFor()
+  await capture(page, 'ui-v3-work-order-detail-390.png', 'Mobile work order detail')
+  await navigateMobile(page, '工单配置', '工单配置', 'ui-v3-work-order-configs-390.png')
   await navigateMobile(page, '数据质量', '数据质量', 'ui-v3-quality-390.png')
   await navigateMobile(page, '模型评估', '模型评估', 'ui-v3-models-390.png')
   await navigateMobile(page, '系统健康', '系统健康', 'ui-v3-health-390.png')
@@ -553,10 +683,11 @@ try {
     sessionRotation: 'passed (second login changed JSESSIONID)',
     logoutInvalidation: 'passed (old JSESSIONID returns 401)',
     fivePages: 'passed (orders filter/reset, alerts filter + detail review, quality read-only, models read-only, health refresh)',
+    m2WorkOrders: 'passed (explicit alert conversion, claim/start/resolve, read-only config preview, queue/detail at 1440 and 390)',
     shellStyles: 'passed (scoped page-head/filters/table/card; screenshots at 1440 and 390)',
     drawer: 'passed (off-canvas, aria-expanded/controls, inert/aria-hidden, focus return, backdrop/Escape/button/nav close)',
     keyboard: 'passed (keyboard open, Escape close, closed drawer not tabbable)',
-    mobileOverflow: 'passed (all five pages)',
+    mobileOverflow: 'passed (orders, alerts, work orders, work-order detail, configs, quality, models, health)',
     anonymousRedirect: 'passed',
     pageErrors: errors,
   }, null, 2))

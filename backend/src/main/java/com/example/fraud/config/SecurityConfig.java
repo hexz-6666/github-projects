@@ -88,6 +88,21 @@ public class SecurityConfig {
                 .antMatchers("/api/v2/audit/**").hasRole("ADMIN")
                 .antMatchers(org.springframework.http.HttpMethod.POST,
                         "/api/v1/alerts/*/reviews").hasAnyRole("REVIEWER", "ADMIN")
+                .antMatchers(org.springframework.http.HttpMethod.GET,
+                        "/api/v3/work-orders/assignees").hasRole("ADMIN")
+                .antMatchers(org.springframework.http.HttpMethod.GET,
+                        "/api/v3/alerts/*/work-order-candidates").hasAnyRole("REVIEWER", "ADMIN")
+                .antMatchers(org.springframework.http.HttpMethod.POST,
+                        "/api/v3/work-order-configs", "/api/v3/work-order-configs/*/publish",
+                        "/api/v3/work-order-configs/*/disable").hasRole("ADMIN")
+                .antMatchers(org.springframework.http.HttpMethod.PUT,
+                        "/api/v3/work-order-configs/*").hasRole("ADMIN")
+                .antMatchers(org.springframework.http.HttpMethod.POST,
+                        "/api/v3/work-order-configs/preview",
+                        "/api/v3/alerts/*/work-orders",
+                        "/api/v3/work-orders/*/assign",
+                        "/api/v3/work-orders/*/transitions",
+                        "/api/v3/work-orders/*/notes").hasAnyRole("REVIEWER", "ADMIN")
                 .anyRequest().authenticated()
             .and()
             .exceptionHandling()

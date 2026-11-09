@@ -73,6 +73,18 @@ public class ApiException extends RuntimeException {
         return new ApiException(HttpStatus.BAD_GATEWAY, "MODEL_UNAVAILABLE", "模型服务暂不可用");
     }
 
+    public static ApiException conflict(String code, String message) {
+        return new ApiException(HttpStatus.CONFLICT, code, message);
+    }
+
+    public static ApiException notFound(String code, String message) {
+        return new ApiException(HttpStatus.NOT_FOUND, code, message);
+    }
+
+    public static ApiException forbidden(String message) {
+        return new ApiException(HttpStatus.FORBIDDEN, "FORBIDDEN", message);
+    }
+
     public static class ErrorDetail {
         private final String field;
         private final String message;

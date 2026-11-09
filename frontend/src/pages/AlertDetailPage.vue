@@ -14,6 +14,11 @@ const error = ref('')
 const notice = ref('')
 const submitting = ref(false)
 const form = reactive({ reviewResult: 'INCONCLUSIVE', comment: '' })
+const linkedWorkOrders = ref([])
+const candidateData = ref(null)
+const selectedConfigId = ref('')
+const workOrderBusy = ref(false)
+const workOrderError = ref('')
 
 const canReview = computed(() => {
   const roles = props.user?.roles || []
@@ -27,11 +32,58 @@ async function load() {
   error.value = ''
   try {
     alert.value = await api(`/api/v1/alerts/${encodeURIComponent(props.alertId)}`)
+    await loadWorkOrders()
   } catch (requestError) {
     error.value = requestError.message
   } finally {
     loading.value = false
   }
+}
+
+async function loadWorkOrders() {
+  workOrderError.value = ''
+  try {
+    linkedWorkOrders.value = await api(`/api/v3/alerts/${encodeURIComponent(props.alertId)}/work-orders`)
+    if (canReview.value) {
+      candidateData.value = await api(
+        `/api/v3/alerts/${encodeURIComponent(props.alertId)}/work-order-candidates`,
+      )
+    } else {
+      candidateData.value = null
+    }
+    if (candidateData.value?.existingWorkOrder) {
+      selectedConfigId.value = ''
+    }
+  } catch (requestError) {
+    workOrderError.value = requestError.message
+  }
+}
+
+async function createWorkOrder() {
+  if (!selectedConfigId.value || workOrderBusy.value) return
+  workOrderBusy.value = true
+  workOrderError.value = ''
+  try {
+    const result = await api(`/api/v3/alerts/${alert.value.alertId}/work-orders`, {
+      method: 'POST',
+      body: { configId: Number(selectedConfigId.value) },
+    })
+    notice.value = result.idempotent ? '该告警已有相同配置工单，已打开原工单。' : '工单已创建。'
+    emit('navigate', 'workorders', result.id)
+  } catch (requestError) {
+    if (requestError.code === 'WORK_ORDER_ALREADY_EXISTS_DIFFERENT_CONFIG') {
+      workOrderError.value = '该告警已使用其他配置创建工单，不能静默复用。请打开已有工单。'
+      await loadWorkOrders()
+    } else {
+      workOrderError.value = requestError.message
+    }
+  } finally {
+    workOrderBusy.value = false
+  }
+}
+
+function existingWorkOrder() {
+  return candidateData.value?.existingWorkOrder || linkedWorkOrders.value[0] || null
 }
 
 async function submitReview() {
@@ -147,6 +199,51 @@ onMounted(load)
             <p>{{ review.comment || '无备注' }}</p>
             <small>{{ review.previousStatus }} → {{ review.newStatus }}</small>
           </div>
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>关联工单</h2>
+        <p v-if="workOrderError" class="error-box" role="alert">{{ workOrderError }}</p>
+
+        <div v-if="existingWorkOrder()" class="work-order-existing">
+          <p class="muted">该告警已存在工单；同一告警只能有一个工单。</p>
+          <button type="button" class="link" @click="emit('navigate', 'workorders', existingWorkOrder().id)">
+            打开工单 #{{ existingWorkOrder().id }}（{{ existingWorkOrder().status }}）
+          </button>
+        </div>
+
+        <template v-else-if="canReview && candidateData?.actionable">
+          <p class="muted">必须显式选择一个已发布且匹配的配置；系统不会自动猜选。</p>
+          <div v-if="!candidateData.candidates?.length" class="state">
+            没有匹配当前告警的 ACTIVE 配置。请先在“工单配置”发布配置。
+          </div>
+          <div v-else class="review-form">
+            <label class="grow">
+              <span>工单配置</span>
+              <select v-model="selectedConfigId" data-testid="config-select">
+                <option value="">请选择匹配配置</option>
+                <option v-for="candidate in candidateData.candidates" :key="candidate.configId" :value="String(candidate.configId)">
+                  {{ candidate.code }} · {{ candidate.name }} · v{{ candidate.publishedVersion }}
+                  · SLA {{ candidate.slaMinutes }} 分钟{{ candidate.requiresReview ? ' · 需复核' : '' }}
+                </option>
+              </select>
+            </label>
+            <button type="button" class="primary" :disabled="!selectedConfigId || workOrderBusy" @click="createWorkOrder">
+              {{ workOrderBusy ? '创建中…' : '创建工单' }}
+            </button>
+          </div>
+        </template>
+
+        <p v-else-if="!canReview" class="muted">当前账号只读，不能创建或处理工单。</p>
+        <p v-else class="muted">该告警当前不可转工单（仅 OPEN / REVIEWING 可创建）。</p>
+
+        <div v-if="linkedWorkOrders.length" class="linked-orders">
+          <h3>告警关联记录</h3>
+          <button v-for="order in linkedWorkOrders" :key="order.id" type="button" class="link"
+            @click="emit('navigate', 'workorders', order.id)">
+            工单 #{{ order.id }} · {{ order.status }} · {{ order.configCode }} v{{ order.configVersionNo }}
+          </button>
         </div>
       </article>
     </template>
