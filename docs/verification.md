@@ -1,6 +1,6 @@
 # 实际验证记录
 
-**验证日期：2026-11-07（Asia/Shanghai）。** 本文件记录本机实际执行的结果，不代表生产验收，也不把 stub 当作 MySQL 成功。除特别说明外，运行数据为独立虚构/合成夹具；未下载官方 Olist/IEEE-CIS 数据。
+**验证日期：2026-11-09（Asia/Shanghai）。** 本文件记录本机实际执行的结果，不代表生产验收，也不把 stub 当作 MySQL 成功。除特别说明外，运行数据为独立虚构/合成夹具；未下载官方 Olist/IEEE-CIS 数据。2026-11-09 增补 v3 M1 登录页、记住账号、壳层与移动端抽屉收尾验收。
 
 ## 1. 环境与范围
 
@@ -8,6 +8,7 @@
 - MySQL 8.0 服务与 3306 端口存在，但**没有可用演示账号**，未猜密码。
 - 无 Docker/Kafka/Hadoop/Kubernetes；无生产 IAM、TLS、KMS、备份恢复实战。
 - v2 代码已实现五页、会话认证/RBAC/CSRF、导入/质量/审计、IEEE 训练评测；v1 契约保持。
+- v3 M1 已实现登录页/记住账号/紧凑壳层和现有五页适配；**未新增后端、API、数据库迁移、工单、日志中心、看板或 ECharts**，未开始 M2。
 
 ## 2. 自动化构建与测试
 
@@ -23,9 +24,12 @@
 |---|---|---|
 | Python pytest | **40 passed**，1 条 Starlette `BlockingPortal` 弃用警告 | v1 32 + v2 训练/评测 8 |
 | Java Maven test | **33 passed，0 failures/errors** | ApiContract 14 + ModelClient 11 + V2ApiTest 8 |
-| Vue production build | **通过**，18 modules，JS 99.97 kB / gzip 37.32 kB | Vue 3.5.45 / Vite 6.4.5 |
+| Vue production build（M1 收尾最终） | **通过**，2060 modules，JS **117.47 kB / gzip 42.62 kB**，CSS **19.49 kB / gzip 5.11 kB**，登录 WebP 33.99 kB | Vue 3.5.45 / Vite 6.4.5 |
+| M1 收尾前检查点 | 2060 modules，JS 116.84 kB / gzip 42.40 kB，CSS 19.36 kB / gzip 5.09 kB | 收尾增加焦点/ARIA/作用域样式后为上一行最终值 |
 | `npm audit --audit-level=moderate` | **0 vulnerabilities** | 仅前端锁定依赖，不等于 Java/Python 全依赖无漏洞 |
 | `pip check` | No broken requirements found | 依赖一致性，不是漏洞扫描 |
+
+M1 图标依赖：`lucide-vue-next@1.0.0` 已被 npm 标记 deprecated，实际改用维护中的 **`@lucide/vue@1.70.0`**（ISC 许可证，peer `vue >=3.0.1`，锁定精确版本）；只导入壳层实际使用的 12 个图标。未引入 ECharts、UI 框架或外部图片/字体。`npm audit --audit-level=moderate` 为 **0 vulnerabilities**。
 
 Java v2 覆盖：匿名 401、分析员越权 403、会话复核身份、Olist 导入幂等、质量检查、缺失目录受控错误、模型注册/评测、非法模型响应 502、审计仅 ADMIN。既有 v1 测试已适配 Session/CSRF，断言字段未放宽。
 
@@ -75,19 +79,26 @@ Python v2 覆盖：时间切分严格递增、`card1+addr1` 实体清除（验�
 
 使用临时安装的 `playwright-core@1.55.0` + 本机 Edge headless，通过 `PLAYWRIGHT_MODULE` 指向 `runtime/browser-tools`。Playwright 不进入生产依赖；`runtime/` 被 Git 忽略。
 
-通过断言（有批次/模型与空状态各跑一次）：
+命令：
 
-- 登录页可见；点击“复核员”演示账号可登录。
-- 订单概览加载 3 笔虚构订单；订单表格不出现“已确认欺诈”。
-- 异常队列 → 详情 → 提交复核 → 成功提示；身份/CSRF 生效。
-- 数据质量：空状态显示“尚无导入批次”；有批次时显示“最近批次/检查结果”。
-- 模型评估：空状态显示“尚无训练模型”；有模型时显示“已注册模型”和指标表。
-- 系统健康：显示 `DEGRADED`、`stub`、`database=BYPASS`，明确“不代表 MySQL 连接成功”。
-- 390×844 移动视口无横向溢出。
-- 新匿名会话回到登录页。
-- 页面 `pageerror` 为空。
+```powershell
+$env:PLAYWRIGHT_MODULE='E:\beysesji\runtime\browser-tools\node_modules\playwright-core'
+node scripts\browser-check.mjs
+```
 
-截图位于 `runtime/ui-*.png`（本机忽略目录）。**模型不支持读图，因此没有声称人工审阅截图的视觉美观性或完整可访问性**；以上仅为 DOM/布局/错误断言。
+M1 收尾通过断言：
+
+- 登录页 1440 双栏、390 单栏；`username`/`current-password` autocomplete；演示账号只填用户名；错误密码不建立会话。
+- 记住账号：首次错误密码不写新用户名；已有 `demo_admin` 时用错误密码登录 `demo_reviewer` 不覆盖旧值；只有登录成功后才写入；取消勾选立即删除；退出登录恢复预填。
+- 浏览器 Web Storage 与 Cookie 中无密码；源码扫描 `frontend/src` 12 个文件，未使用 IndexedDB（本检查不声称扫描 IndexedDB 记录）。
+- 登录轮换 `JSESSIONID`；退出后旧 Cookie 返回 401。
+- 五个页面均有 1440 与 390 截图；订单状态筛选/重置、告警风险筛选、告警详情复核、数据质量只读边界、模型评估只读边界、健康刷新均实际执行。
+- `shell.css` 的页面样式限定在 `.shell` 下；浏览器检查 page-head/filters/table/card 的实际 computed style，不只检查标题存在。
+- 移动抽屉：关闭后几何完全移出视口且无遮罩；`aria-expanded`、`aria-controls`、稳定 `#app-sidebar`；关闭时 `aria-hidden="true"` + `inert`；打开时焦点进入关闭按钮；Escape、遮罩、关闭按钮、导航跳转均关闭并把焦点还给打开按钮；关闭状态按 8 次 Tab 不会进入侧栏。
+- 抽屉关闭等待使用几何 `waitForFunction`（总超时 3s），不是固定 sleep；390×844 五个页面均无横向溢出。
+- 新匿名会话回到登录页；页面 `pageerror` 为空。
+
+截图位于 `runtime/ui-v3-*.png`（本机忽略目录），包括 `ui-v3-login-1440.png`、`ui-v3-orders-1440.png`、`ui-v3-alerts-1440.png`、`ui-v3-quality-1440.png`、`ui-v3-models-1440.png`、`ui-v3-health-1440.png`、`ui-v3-drawer-open-390.png` 及五个 `*-390.png`。**模型不支持读图，因此没有声称人工审阅截图的视觉美观性或完整可访问性**；以上仅为 DOM/布局/错误断言，截图供人工复核。
 
 ## 5. 清理
 
@@ -100,7 +111,7 @@ Python v2 覆盖：时间切分严格递增、`card1+addr1` 实体清除（验�
 
 - 源码扫描未发现请求正文、SQL 参数、密码、Cookie、邮箱或原始载荷的业务日志；演示密码只出现在明确的虚构账号配置/文档中。
 - 错误响应不回显非法输入、下游正文、堆栈、SQL 或内部 URL。
-- 前端只请求相对 `/api`；无 `v-html`、外部图片/字体；CSRF 令牌不写入 localStorage。
+- 前端只请求相对 `/api`；无 `v-html`、外部图片/字体；CSRF 令牌不写入 localStorage。登录页 WebP 为项目内原创程序化资产（来源记录见 [frontend/src/assets/README.md](../frontend/src/assets/README.md)），不是第三方下载。
 - `.gitignore` 排除 `.env*`（保留示例）、`runtime/`、`data/`、CSV/PKL、依赖与构建产物。
 - 未附带官方 Olist/IEEE-CIS CSV/PKL；许可结论见 [data-sources.md](data-sources.md)，核验日期 2026-11-07，不是法律意见。
 

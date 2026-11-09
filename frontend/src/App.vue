@@ -1,5 +1,19 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import {
+  Activity,
+  AlertTriangle,
+  BrainCircuit,
+  ChevronRight,
+  Database,
+  LogOut,
+  Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
+  ReceiptText,
+  ShieldCheck,
+  X,
+} from '@lucide/vue'
 import { api, resetCsrf } from './api.js'
 import LoginPage from './pages/LoginPage.vue'
 import OrdersPage from './pages/OrdersPage.vue'
@@ -12,13 +26,32 @@ import HealthPage from './pages/HealthPage.vue'
 const user = ref(null)
 const loading = ref(true)
 const route = ref(parseHash())
+const collapsed = ref(false)
+const mobileOpen = ref(false)
+const menuButton = ref(null)
+const closeButton = ref(null)
+const mobileQuery = window.matchMedia('(max-width: 900px)')
+const isMobile = ref(mobileQuery.matches)
 
-const navItems = [
-  { name: 'orders', label: '订单概览' },
-  { name: 'alerts', label: '异常队列' },
-  { name: 'quality', label: '数据质量' },
-  { name: 'models', label: '模型评估' },
-  { name: 'health', label: '系统健康' },
+const navGroups = [
+  {
+    label: '风险业务',
+    items: [
+      { name: 'orders', label: '订单概览', icon: ReceiptText },
+      { name: 'alerts', label: '异常队列', icon: AlertTriangle },
+    ],
+  },
+  {
+    label: '数据与模型',
+    items: [
+      { name: 'quality', label: '数据质量', icon: Database },
+      { name: 'models', label: '模型评估', icon: BrainCircuit },
+    ],
+  },
+  {
+    label: '系统',
+    items: [{ name: 'health', label: '系统健康', icon: Activity }],
+  },
 ]
 
 const roleLabels = {
@@ -27,18 +60,32 @@ const roleLabels = {
   ADMIN: '管理员',
 }
 
+const pages = {
+  orders: OrdersPage,
+  alerts: AlertsPage,
+  quality: DataQualityPage,
+  models: ModelEvaluationPage,
+  health: HealthPage,
+}
+
 const page = computed(() => {
   if (route.value.name === 'alerts' && route.value.id) {
     return { component: AlertDetailPage, props: { alertId: route.value.id } }
   }
-  const pages = {
-    orders: OrdersPage,
-    alerts: AlertsPage,
-    quality: DataQualityPage,
-    models: ModelEvaluationPage,
-    health: HealthPage,
-  }
   return { component: pages[route.value.name] || OrdersPage, props: {} }
+})
+
+const currentItem = computed(() => {
+  if (route.value.name === 'alerts' && route.value.id) {
+    return { label: '告警详情', group: '风险业务' }
+  }
+  for (const group of navGroups) {
+    const item = group.items.find((candidate) => candidate.name === route.value.name)
+    if (item) {
+      return { ...item, group: group.label }
+    }
+  }
+  return { label: '订单概览', group: '风险业务' }
 })
 
 const roleText = computed(() => {
@@ -48,6 +95,8 @@ const roleText = computed(() => {
   return user.value.roles.map((role) => roleLabels[role] || role).join(' / ')
 })
 
+const initials = computed(() => (user.value?.username || '?').slice(0, 1).toUpperCase())
+
 function parseHash() {
   const raw = window.location.hash.replace(/^#\/?/, '')
   const parts = raw.split('/').filter(Boolean)
@@ -56,11 +105,29 @@ function parseHash() {
 
 function syncRoute() {
   route.value = parseHash()
+  if (mobileOpen.value) {
+    closeMobileNav()
+  }
 }
 
 function navigate(name, id) {
   window.location.hash = id ? `#/${name}/${id}` : `#/${name}`
   syncRoute()
+}
+
+async function openMobileNav() {
+  mobileOpen.value = true
+  await nextTick()
+  closeButton.value?.focus()
+}
+
+async function closeMobileNav() {
+  const wasOpen = mobileOpen.value
+  mobileOpen.value = false
+  if (wasOpen) {
+    await nextTick()
+    menuButton.value?.focus()
+  }
 }
 
 async function checkSession() {
@@ -91,6 +158,7 @@ async function logout() {
   }
   resetCsrf()
   user.value = null
+  mobileOpen.value = false
   window.location.hash = ''
   syncRoute()
 }
@@ -98,61 +166,148 @@ async function logout() {
 function handleExpired() {
   user.value = null
   resetCsrf()
+  mobileOpen.value = false
+}
+
+function handleKeydown(event) {
+  if (event.key === 'Escape' && mobileOpen.value) {
+    closeMobileNav()
+  }
+}
+
+function handleViewportChange(event) {
+  isMobile.value = event.matches
+  if (!event.matches) {
+    mobileOpen.value = false
+  }
 }
 
 onMounted(() => {
   window.addEventListener('hashchange', syncRoute)
   window.addEventListener('auth-expired', handleExpired)
+  window.addEventListener('keydown', handleKeydown)
+  mobileQuery.addEventListener('change', handleViewportChange)
   checkSession()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('hashchange', syncRoute)
   window.removeEventListener('auth-expired', handleExpired)
+  window.removeEventListener('keydown', handleKeydown)
+  mobileQuery.removeEventListener('change', handleViewportChange)
 })
 </script>
 
 <template>
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
+
   <div v-if="loading" class="app-loading">正在检查登录状态…</div>
 
   <LoginPage v-else-if="!user" @logged-in="handleLoggedIn" />
 
-  <div v-else class="shell">
-    <aside class="sidebar">
-      <div class="brand">
-        <span class="brand-mark">FR</span>
-        <div>
+  <div v-else :class="['shell', { 'is-collapsed': collapsed }]">
+    <button
+      v-if="mobileOpen"
+      type="button"
+      class="sidebar-backdrop"
+      aria-label="关闭导航"
+      @click="closeMobileNav"
+    ></button>
+
+    <aside
+      id="app-sidebar"
+      :class="['sidebar', { 'is-open': mobileOpen }]"
+      :aria-hidden="isMobile && !mobileOpen ? 'true' : undefined"
+      :inert="isMobile && !mobileOpen ? true : undefined"
+      aria-label="主导航"
+    >
+      <div class="sidebar-brand">
+        <span class="brand-mark" aria-hidden="true"><ShieldCheck :size="20" /></span>
+        <div class="brand-copy">
           <strong>订单风险复核台</strong>
           <small>虚构演示 · 非生产</small>
         </div>
-      </div>
-      <nav>
         <button
-          v-for="item in navItems"
-          :key="item.name"
           type="button"
-          :class="['nav-item', { active: route.name === item.name }]"
-          @click="navigate(item.name)"
+          class="icon-button sidebar-collapse"
+          :aria-label="collapsed ? '展开侧栏' : '折叠侧栏'"
+          :aria-expanded="!collapsed"
+          @click="collapsed = !collapsed"
         >
-          {{ item.label }}
+          <PanelLeftOpen v-if="collapsed" :size="18" />
+          <PanelLeftClose v-else :size="18" />
         </button>
+        <button
+          ref="closeButton"
+          type="button"
+          class="icon-button sidebar-close-mobile"
+          aria-label="关闭导航"
+          @click="closeMobileNav"
+        >
+          <X :size="19" />
+        </button>
+      </div>
+
+      <nav class="side-nav">
+        <div v-for="group in navGroups" :key="group.label" class="nav-group">
+          <p class="nav-group-label">{{ group.label }}</p>
+          <button
+            v-for="item in group.items"
+            :key="item.name"
+            type="button"
+            :class="['nav-item', { active: route.name === item.name }]"
+            :aria-label="item.label"
+            :aria-current="route.name === item.name ? 'page' : undefined"
+            :title="collapsed ? item.label : undefined"
+            @click="navigate(item.name)"
+          >
+            <component :is="item.icon" :size="18" class="nav-icon" aria-hidden="true" />
+            <span class="nav-label">{{ item.label }}</span>
+            <ChevronRight v-if="route.name === item.name" :size="15" class="nav-active-mark" aria-hidden="true" />
+          </button>
+        </div>
       </nav>
-      <div class="sidebar-note">
-        <p>规则分不是欺诈概率；复核结论不是客观真值；Olist 与 IEEE-CIS 不互相补标。</p>
+
+      <div class="sidebar-foot">
+        <p>规则分不是欺诈概率；告警不是欺诈事实；复核结论不是客观真值。</p>
+        <span class="sidebar-env">LOCAL DEMO</span>
       </div>
     </aside>
 
     <div class="workspace">
       <header class="topbar">
-        <div>
-          <span class="muted">当前用户</span>
-          <strong class="user-name">{{ user.username }}</strong>
-          <span class="role-chip">{{ roleText }}</span>
+        <div class="topbar-left">
+          <button
+            ref="menuButton"
+            type="button"
+            class="icon-button mobile-menu"
+            aria-label="打开导航"
+            aria-controls="app-sidebar"
+            :aria-expanded="mobileOpen ? 'true' : 'false'"
+            @click="openMobileNav"
+          >
+            <Menu :size="20" />
+          </button>
+          <div class="topbar-context">
+            <span>{{ currentItem.group }}</span>
+            <strong>{{ currentItem.label }}</strong>
+          </div>
         </div>
-        <button type="button" class="ghost" @click="logout">退出登录</button>
+
+        <div class="topbar-user">
+          <span class="user-avatar" aria-hidden="true">{{ initials }}</span>
+          <div class="user-meta">
+            <strong>{{ user.username }}</strong>
+            <small>{{ roleText }}</small>
+          </div>
+          <button type="button" class="ghost logout-button" aria-label="退出登录" @click="logout">
+            <LogOut :size="16" aria-hidden="true" />
+            <span>退出登录</span>
+          </button>
+        </div>
       </header>
 
-      <main class="content">
+      <main id="main-content" class="content" tabindex="-1">
         <component
           :is="page.component"
           :key="route.name + (route.id || '')"
