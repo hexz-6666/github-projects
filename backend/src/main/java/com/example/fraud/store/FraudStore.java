@@ -28,6 +28,19 @@ public interface FraudStore {
     /** MySQL: SELECT ... FOR UPDATE；Stub: 与复核共用同一锁。必须在事务内调用。 */
     Optional<AlertRecord> findAlertForUpdate(long alertId);
 
+    /**
+     * Stub-only process-local lock for the whole create critical section.
+     *
+     * <p>MySQL must never use this as a substitute for a database transaction or
+     * row lock. The stub implementation returns the same object used by
+     * {@link #review(long, String, ReviewResult, String, int)} so create and
+     * review cannot interleave. Production callers keep using
+     * {@link #findAlertForUpdate(long)} inside a transaction.</p>
+     */
+    default Object alertMutationLock(long alertId) {
+        return this;
+    }
+
     List<ReviewRecord> findReviews(long alertId);
     ReviewResponse review(long alertId, String reviewerId, ReviewResult result,
                           String comment, int expectedVersion);

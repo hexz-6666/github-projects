@@ -1,8 +1,8 @@
 # M2 交接说明（最新）
 
-更新时间：2026-11-09（Asia/Shanghai）
-状态：**M2 corrective patch 已完成 Stub/浏览器验证；MySQL 未验证；M3 尚未开始。**
-M1 基线提交 `77c35d4` 与 M2 原提交 `e72bd3a` 保持未修改、未 amend；corrective patch 使用新的独立提交（哈希见 `git log -1`，最终报告同时记录）。
+更新时间：2026-11-12（Asia/Shanghai）
+状态：**M2 最终整改已完成 Stub/浏览器验证；MySQL 未验证；M3 尚未开始。**
+M1 基线提交 `77c35d4`、M2 原提交 `e72bd3a`、M2 corrective patch `9d0f236` 保持未修改、未 amend。本次补充补丁的改动仍在**未提交工作树**中；未获单独授权前不执行 Git commit。
 
 ## 1. 本阶段实际范围
 
@@ -16,7 +16,7 @@ M2 只实现：
 - `UNIQUE(alert_id)` 幂等与不同配置冲突；
 - 告警 ↔ 工单双向追踪。
 
-明确未做：M3/M4/M5、日志中心/前端日志窗口/任务日志、看板、图表、ECharts、BPMN、MQ、分布式调度、异步任务平台。未修改 Python、V1/V2 Controller 或响应、认证/CSRF、模型协议、数据源/标签语义、`.env`、`runtime`、`data`、`node_modules`、`dist`、`target`、真实凭据、V1/V2/V3 迁移。
+明确未做：M3/M4/M5、日志中心/前端日志窗口/任务日志、看板、图表、ECharts、BPMN、MQ、分布式调度、异步任务平台。未修改 Python、V1/V2 Controller 或响应、认证/CSRF、模型协议、数据源/标签语义、`.env`、`runtime`、`data`、`node_modules`、`dist`、`target`、真实凭据、V1/V2/V3 迁移。本次补充补丁没有修改前端、V4 SQL 或数据库迁移；`V3WorkOrderController.create()` 只把响应渲染切换到 `createDetail()`，普通详情仍走 `detail(id)`。
 
 ## 2. 数据库
 
@@ -34,7 +34,9 @@ corrective patch 的数据库改动：
 - V4 末尾的 `ALTER` 全部用 `information_schema` 守卫，干净库/已执行库/部分执行库可重复执行；无无条件 `ADD CONSTRAINT`、无 `DROP TABLE`、无清理历史；
 - 历史数据违规时组合外键会拒绝添加；只能人工核对修复引用，或暂缓约束，禁止自动删改历史。定位 SQL 写在 `database/README.md`。
 
-V4 不修改 V1/V3 表数据，不 DROP、不回滚。**未在 MySQL 8 执行 V4**：本机有 MySQL 服务但没有可用演示账号，未猜密码。因此 MySQL 的 DDL/FK/CHECK/权限行为均为未验证；`M2MysqlIT` 只有在设置 `DB_URL` 时才运行，本次未运行。发布逻辑已按“先插入版本、再更新 `published_version`”实现；这是静态修正，不等于 MySQL 实测通过。
+V4 不修改 V1/V3 表数据，不 DROP、不回滚。**V4 对预期结构的干净库、已执行库和缺少对象的部分执行库可重复执行；同名但定义错误的对象不会被自动修复。** 守卫只检查对象名，不比对既有索引/外键/CHECK 的列、引用或定义，因此发布前仍需 schema 预检。
+
+**未在 MySQL 8 执行 V4**：本机有 MySQL 服务但没有可用演示账号，未猜密码。因此 MySQL 的 DDL/FK/CHECK/权限行为均为未验证；`M2MysqlIT` 只有在**同时**设置 `DB_URL`、`DB_USERNAME`、`DB_PASSWORD` 时才运行，本次三项均未设置，测试类在 Spring 上下文前跳过。测试源码现有 8 个 `@Test` 方法，覆盖自包含 fixture、V4 两次执行、精确索引/外键/CHECK 预检、违规版本三元组/非法状态/跨告警复核、唯一键翻译、两个建单线程、建单/复核并发、按 `CreateResult.isIdempotent()` 返回 200/201，以及超长 `request_id` 触发 event 写入失败后的回滚断言；V4 文件路径从 `basedir`/`user.dir` 的当前目录和父目录解析，支持在 `backend` 直接运行及仓库根目录 `mvn -f backend/pom.xml`。审计清理只按本次 fixture 的唯一 `request_id`、`target_type='WORK_ORDER'` 和 `action='WORK_ORDER_CREATED'` 删除，不按裸 `target_id`。但这只是源码与规划，8 个方法均未实际运行，不等于真实执行通过。发布逻辑已按“先插入版本、再更新 `published_version`”实现；这是静态修正，不等于 MySQL 实测通过。
 
 ## 3. 后端与 API
 
@@ -64,9 +66,10 @@ V4 不修改 V1/V3 表数据，不 DROP、不回滚。**未在 MySQL 8 执行 V4
 - 触发字段白名单：`sourceSystems`、`riskLevels`、`alertStatuses`、`reasonCodes`；不允许表达式/脚本/SQL；
 - `riskScoreThreshold` 顶层，`score >= threshold`，标签固定“风险分阈值（非欺诈概率）”；
 - 预览只使用最后一次已发布版本，不提供草稿预览；DISABLED 不可预览/候选；
-- 同配置重复建单 `200 idempotent=true`；不同配置 `409 WORK_ORDER_ALREADY_EXISTS_DIFFERENT_CONFIG`；
-- **幂等判断先于告警/配置状态检查**：先锁告警、查 `UNIQUE(alert_id)`，已有同配置工单即使告警已解决或配置已停用仍返回 200；
-- 建单在独立事务中按 `告警 → 配置` 固定顺序锁定；检查、`work_order` 插入、`CREATED` 事件、审计同事务提交。唯一键冲突回滚后，在事务外读取已有工单；Stub 模式用同一临界区模拟；
+- 同配置重复建单且已有工单可见：`200 idempotent=true`；不同配置且已有工单可见：`409 WORK_ORDER_ALREADY_EXISTS_DIFFERENT_CONFIG`；
+- **已有工单不可见时，重复建单不返回详情**：非 ADMIN 且工单已分派给其他处理人时，同配置或不同配置的重复建单均返回 `404 WORK_ORDER_NOT_FOUND`，不泄露 `alert`、`configSnapshot`、`events`、`resolutionReviewCandidates`、`resolutionReview`、`assigneeId`、`createdBy`、`updatedBy`、`dueAt`、`resolvedAt`。普通 `GET /api/v3/work-orders/{id}` 仍返回既有 403，不改为 404；返回详情前按工单 ID 重新读取最新行，writer 的旧快照不能绕过可见性；
+- **幂等判断先于告警/配置状态检查**：先锁告警、查 `UNIQUE(alert_id)`，已有同配置工单即使告警已解决或配置已停用仍返回 200；但返回前仍必须通过可见性检查；
+- 建单在独立事务中按 `告警 → 配置` 固定顺序锁定；检查、`work_order` 插入、`CREATED` 事件、审计同事务提交。唯一键冲突回滚后，在事务外读取已有工单并再次做可见性/配置判断；Stub 模式用与 `review()` 共享的 `alertMutationLock` 覆盖完整边界，MySQL 仍使用 `SELECT ... FOR UPDATE`，不以 JVM 锁替代 InnoDB；
 - `CANCEL/RESOLVE` 备注必填；`RESOLVE` 的 `requiresReview=true` 必须关联同一告警、晚于工单创建、非 INCONCLUSIVE 的复核；
 - 详情/创建/动作响应返回服务端计算的 `actions`：`canAssign`、`canAssignSelf`、`canClaim`、`canStart`、`canResolve`、`canCancel`、`canAddNote`；前端不再自行推断权限；
 - 事件与审计同事务；终态不可重开/加备注。
@@ -89,25 +92,32 @@ V4 不修改 V1/V3 表数据，不 DROP、不回滚。**未在 MySQL 8 执行 V4
 
 | 项目 | 结果 |
 |---|---|
-| Java 全量 `mvn test` | **50 passed，0 failures/errors，0 skipped**（M2ConfigApiTest 6 + M2WorkOrderApiTest 11，其余为 M1/v1/v2） |
-| Python `pytest model-service -q` | **40 passed，1 warning**（Starlette 弃用警告，不涉及 M2 代码） |
-| Vue production build | **通过**，2063 modules；JS 153.45 kB / gzip 51.74 kB；CSS 23.19 kB / gzip 5.95 kB |
+| Java 全量 `mvn test`（2026-11-12 14:49，不含门控 `M2MysqlIT`） | **58 tests，58 passed，0 failures，0 errors，0 skipped**；ApiContract 14 + M2ConfigApiTest 6 + M2WorkOrderApiTest 14 + M2WorkOrderServiceTest 5 + ModelClient 11 + V2ApiTest 8 |
+| Java `M2MysqlIT` 单独门控运行（14:50） | **1 test，1 skipped，0 failures/errors**；三个环境变量均未设置，未连接 MySQL；源码 8 个 `@Test` 方法均未执行 |
+| Python `.venv\Scripts\python -m pytest model-service -q` | **40 passed，1 warning**（Starlette 弃用警告，不涉及 M2 代码）；0.79s |
+| Vue production build | **通过**，2063 modules；JS 153.45 kB / gzip 51.74 kB；CSS 23.19 kB / gzip 5.95 kB；2.24s |
 | Browser `node scripts/browser-check.mjs` | **通过**；1440/901/940/980/390 视口、M1 五页回归、M2 显式转单/领取/开始/完成/取消确认、只读配置预览、队列/详情；`pageErrors=[]`；无横向溢出 |
-| Stub 模式 | 已覆盖配置生命周期、版本/预览、权限、幂等、状态机、备注、SLA 字段、可见性、服务端 actions、并发建单 |
-| MySQL 模式 | **未运行、未验证**（无凭据）；V4 仅静态审查；`M2MysqlIT` 未运行 |
+| Stub 模式 | 已覆盖配置生命周期、版本/预览、权限、幂等、状态机、备注、SLA 字段、可见性、服务端 actions、并发建单、重复建单副作用、复核/建单并发、旧快照重新读取后拒绝 |
+| MySQL 模式 | **未运行、未验证**（无凭据）；V4 仅静态审查；`M2MysqlIT` 源码扩展但本次跳过 |
 
-M2 测试重点覆盖：未登录 401/缺失 CSRF 403、角色 403、草稿不可见、搜索不泄露草稿名称、非法触发器/未知字段、expectedVersion 冲突、发布快照不可变、未发布修改不生效、预览计数、同配置幂等/不同配置 409、配置停用或告警解决后同配置仍幂等、状态迁移非法/终态、取消角色、备注权限、复核完成规则、SLA 使用已发布快照、scope 可见性、旧工单不被前 100 条截断、服务端 actions、两个并发建单只产生一个新建。
+M2 测试重点覆盖：未登录 401/缺失 CSRF 403、角色 403、草稿不可见、搜索不泄露草稿名称、非法触发器/未知字段、expectedVersion 冲突、发布快照不可变、未发布修改不生效、预览计数、同配置幂等/不同配置 409、配置停用或告警解决后同配置仍幂等、不可见工单重复建单 404 且无详情字段、可见 owner/ADMIN 幂等、`DuplicateWorkOrderException` 回退不泄露、精确不同配置异常在不可见时转 404、状态迁移非法/终态、取消角色、备注权限、复核完成规则、SLA 使用已发布快照、scope 可见性、旧工单不被前 100 条截断、服务端 actions、两个并发建单只产生一个新建、重试只产生一个工单/一个 `CREATED`/一条审计、复核与建单并发不产生“告警已解决后新建”的可观察结果、writer 旧未分派快照在重新读取后已分派给他人时返回 404。`M2MysqlIT` 源码还包含按 `CreateResult.isIdempotent()` 返回 200/201、唯一 requestId 审计清理、V4 路径解析和超长 requestId 触发 event 写入失败的回滚断言，但均未在真实 MySQL 执行。
+
+Stub 并发测试使用同一 JVM 临界区，证明可观察语义，不证明 MySQL 事务回滚、InnoDB `FOR UPDATE` 等待、唯一键并发或 `DuplicateKeyException` 翻译；这些仍标记为未验证。
 
 ## 6. 三个最高风险点与证据
 
-1. **MySQL 组合外键/守卫仍未实测**：`fk_woc_published_version` 的发布顺序、`fk_wo_resolution_review_alert` 的跨告警拒绝、三列 `fk_wo_config_version_consistent` 的版本一致性都只在 Stub/静态层面验证；V4 的 `PREPARE` 守卫是否在目标 MySQL 客户端版本上完整执行也未验证。证据：`M2MysqlIT` 未运行、V4 未执行；不能声称 MySQL 通过。
-2. **真实 MySQL 的并发事务窗口**：`WorkOrderCreateWriter` 依赖告警行 `FOR UPDATE` 串行化建单，Stub 用 `synchronized` 模拟；Stub 并发测试证明可观察语义，但不证明 InnoDB 锁等待、`DuplicateKeyException` 翻译、事务回滚和死锁处理。必须在真实 MySQL 上补充并运行并发测试。
-3. **历史违规数据会阻止 V4 加约束**：组合外键要求历史工单的复核/版本引用一致；V4 不自动清理，违规库会添加失败。已文档化只读定位 SQL 和人工修复边界，但没有真实库可用于演练。
+1. **MySQL 组合外键/守卫仍未实测**：`fk_woc_published_version` 的发布顺序、`fk_wo_resolution_review_alert` 的跨告警拒绝、三列 `fk_wo_config_version_consistent` 的版本一致性都只在 Stub/静态层面验证；V4 的 `PREPARE` 守卫是否在目标 MySQL 客户端版本上完整执行也未验证。证据：`M2MysqlIT` 本次跳过、V4 未执行；不能声称 MySQL 通过。
+2. **真实 MySQL 的并发事务窗口**：`WorkOrderCreateWriter` 依赖告警行 `FOR UPDATE` 串行化建单，Stub 用 `alertMutationLock`/`reviewLock` 模拟；Stub 并发测试证明可观察语义，但不证明 InnoDB 锁等待、`DuplicateKeyException` 翻译、事务回滚、失败时无孤立 `work_order`/事件/审计，或死锁处理。`M2MysqlIT` 已包含这些方向的测试源码（含超长 `request_id` 的 event 失败回滚断言），但 8 个方法均未运行。
+3. **V4 守卫只按对象名判断**：历史违规数据会阻止 V4 加约束，而同名但定义错误的索引/外键/CHECK 不会被自动发现或修复。`M2MysqlIT` 的 schema 预检只在真实数据库运行时才会暴露这种漂移；当前没有真实库可用于演练。
 
 ## 7. 当前运行与清理
 
-`scripts/dev.ps1` 曾启动 8000/8080/5173 进行浏览器验证，验证后应停止本次启动的进程；不得终止用户自己的进程。`runtime/` 下生成浏览器截图和测试日志，已被忽略，不作为交付物。
+`scripts/dev.ps1` 曾启动 8000/8080/5173 进行浏览器验证；本次只停止该脚本启动的进程，未终止用户自己的进程。`runtime/` 下生成浏览器截图和测试日志，已被忽略，不作为交付物。
 
-## 8. 下一阶段
+## 8. 文档口径
+
+`docs/acceptance-checklist.md` 仍是历史 v2 验收快照（Java 33、无 M2/V4 章节），本次未改写；它不能作为当前 M2 验收结果。当前口径以 [verification.md](verification.md) 和本文件为准。
+
+## 9. 下一阶段
 
 **M3 尚未开始。** 本阶段到此停止，不自动进入 M3，也不扩展日志中心、看板、图表、BPMN 或异步平台。

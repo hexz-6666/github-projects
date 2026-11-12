@@ -82,9 +82,17 @@ public class WorkOrderService {
         String actor = actor(authentication);
         String role = auditService.roleName(authentication);
         String requestId = auditService.requestId(servletRequest);
+        // Auxiliary check only: the writer still owns locking, idempotency and
+        // transaction boundaries. This keeps an invisible existing work order
+        // from reaching the different-config 409 branch.
+        requireExistingVisible(alertId, authentication);
         try {
             WorkOrderCreateWriter.Result result = createWriter.create(alertId, configId, actor, role, requestId);
-            return new CreateResult(result.getRecord(), result.isIdempotent());
+            // The writer result is a snapshot. Re-read the current row by id so
+            // a concurrent assignment cannot make a stale unassigned snapshot
+            // visible to a caller who no longer owns the work order.
+            WorkOrderRecord fresh = requireFreshVisibleForCreate(result.getRecord().getId(), authentication);
+            return new CreateResult(fresh, result.isIdempotent());
         } catch (DuplicateWorkOrderException exception) {
             // Defensive fallback for a unique-key race outside the normal
             // alert-row lock path. This read happens after the writer transaction
@@ -92,13 +100,41 @@ public class WorkOrderService {
             WorkOrderRecord existing = workOrderStore.findByAlertId(alertId)
                     .orElseThrow(() -> new ApiException(HttpStatus.CONFLICT,
                             "WORK_ORDER_ALREADY_EXISTS", "该告警已存在工单"));
-            if (existing.getConfigId() != configId) {
+            WorkOrderRecord fresh = requireFreshVisibleForCreate(existing.getId(), authentication);
+            if (fresh.getConfigId() != configId) {
                 throw new ApiException(HttpStatus.CONFLICT,
                         "WORK_ORDER_ALREADY_EXISTS_DIFFERENT_CONFIG",
                         "该告警已使用其他配置创建工单");
             }
-            return new CreateResult(existing, true);
+            return new CreateResult(fresh, true);
+        } catch (ApiException exception) {
+            // The writer throws this exact code after it has observed an
+            // existing work order. Re-read that row and convert to 404 when it
+            // is currently invisible; only a visible current record may reveal
+            // the 409 conflict.
+            if ("WORK_ORDER_ALREADY_EXISTS_DIFFERENT_CONFIG".equals(exception.getCode())) {
+                WorkOrderRecord existing = workOrderStore.findByAlertId(alertId).orElse(null);
+                if (existing != null) {
+                    requireFreshVisibleForCreate(existing.getId(), authentication);
+                }
+            }
+            throw exception;
         }
+    }
+
+    private void requireExistingVisible(long alertId, Authentication authentication) {
+        WorkOrderRecord existing = workOrderStore.findByAlertId(alertId).orElse(null);
+        if (existing != null && !canView(existing, authentication)) {
+            throw notFound();
+        }
+    }
+
+    private WorkOrderRecord requireFreshVisibleForCreate(long id, Authentication authentication) {
+        WorkOrderRecord fresh = workOrderStore.findById(id).orElseThrow(WorkOrderService::notFound);
+        if (!canView(fresh, authentication)) {
+            throw notFound();
+        }
+        return fresh;
     }
 
     public PageResponse<Map<String, Object>> list(WorkOrderScope scope, WorkOrderStatus status,
@@ -120,7 +156,7 @@ public class WorkOrderService {
 
     public Map<String, Object> detail(long id, Authentication authentication) {
         WorkOrderRecord record = requireVisible(id, authentication);
-        return detail(record, authentication);
+        return buildDetail(record, authentication);
     }
 
     public List<Map<String, Object>> alertWorkOrders(long alertId, Authentication authentication) {
@@ -230,7 +266,7 @@ public class WorkOrderService {
         detail.put("toStatus", WorkOrderStatus.ASSIGNED.name());
         audit(authentication, eventType == WorkOrderEventType.REASSIGNED
                 ? "WORK_ORDER_REASSIGNED" : "WORK_ORDER_ASSIGNED", id, request, detail);
-        return detail(workOrderStore.findById(id).orElseThrow(WorkOrderService::notFound), authentication);
+        return detail(id, authentication);
     }
 
     @Transactional
@@ -328,7 +364,7 @@ public class WorkOrderService {
             throw new ApiException(HttpStatus.CONFLICT, "INVALID_WORK_ORDER_TRANSITION",
                     "不支持的工单动作");
         }
-        return detail(workOrderStore.findById(id).orElseThrow(WorkOrderService::notFound), authentication);
+        return detail(id, authentication);
     }
 
     @Transactional
@@ -354,7 +390,7 @@ public class WorkOrderService {
                 auditService.requestId(request));
         audit(authentication, "WORK_ORDER_NOTE_ADDED", id, request, statusDetail(current.getStatus(),
                 current.getStatus()));
-        return detail(workOrderStore.findById(id).orElseThrow(WorkOrderService::notFound), authentication);
+        return detail(id, authentication);
     }
 
     public List<Map<String, Object>> assignees(Authentication authentication) {
@@ -364,7 +400,15 @@ public class WorkOrderService {
         return assigneeDirectory.list();
     }
 
-    public Map<String, Object> detail(WorkOrderRecord record, Authentication authentication) {
+    public Map<String, Object> createDetail(long id, Authentication authentication) {
+        // This path is used only by the create/idempotency response. It always
+        // re-reads the latest row, then applies the create-specific 404 rule;
+        // ordinary detail(id) keeps its existing 403 through requireVisible.
+        WorkOrderRecord fresh = requireFreshVisibleForCreate(id, authentication);
+        return buildDetail(fresh, authentication);
+    }
+
+    private Map<String, Object> buildDetail(WorkOrderRecord record, Authentication authentication) {
         AlertRecord alert = requireAlert(record.getAlertId());
         Map<String, Object> result = new LinkedHashMap<String, Object>();
         result.put("id", record.getId());

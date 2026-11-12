@@ -17,7 +17,7 @@ beysesji/
 ├── backend/                       # Spring Boot 对外 API、事务、审计、导入协调
 │   ├── src/main/java/com/example/fraud/
 │   ├── src/main/resources/application.yml
-│   ├── src/test/java/             # 33 项 MockMvc/模型客户端测试
+│   ├── src/test/java/             # 58 项 MockMvc/服务/模型客户端测试
 │   └── pom.xml
 ├── model-service/                 # FastAPI v1 规则评分 + v2 IEEE 训练/评测
 │   ├── app/{main,schemas,scoring,training}.py
@@ -153,7 +153,7 @@ database/migrations/V3__v2_sources_eval.sql  # 放开单源限制，新增导入
 database/migrations/V4__v3_work_orders.sql   # M2 工单/配置/版本/事件与组合约束
 ```
 
-然后用 `database/verify_synthetic.sql` 核对基础行数。V3 必须在 V1 之后，V4 必须在 V1–V3 之后；V2 种子在 V3 前后均可，但推荐按上表顺序。不要重复执行种子。V4 的约束/索引使用 `information_schema` 守卫，可在干净库或已执行/部分执行的库上重复执行；不要用 `DROP TABLE` 或回滚迁移修复。详见 [database/README.md](database/README.md)。
+然后用 `database/verify_synthetic.sql` 核对基础行数。V3 必须在 V1 之后，V4 必须在 V1–V3 之后；V2 种子在 V3 前后均可，但推荐按上表顺序。不要重复执行种子。V4 的约束/索引使用 `information_schema` 守卫：**V4 对预期结构的干净库、已执行库和缺少对象的部分执行库可重复执行；同名但定义错误的对象不会被自动修复。** 不要用 `DROP TABLE` 或回滚迁移修复。详见 [database/README.md](database/README.md)。
 
 MySQL 管理账号只做 DDL；应用另建最小权限账号，仅授予 `fraud_demo.*` 的 SELECT/INSERT/UPDATE/DELETE：
 
@@ -224,7 +224,7 @@ Invoke-RestMethod "$base/api/v1/alerts/1/reviews" -Method Post -WebSession $sess
 .\scripts\verify.ps1
 ```
 
-运行前停止 `dev.ps1` 启动的后端，避免 Maven 与运行进程共享 `backend/target/classes`。脚本执行 Python 40 项、Java 50 项、Vue 生产构建；不把 MySQL DDL/凭据验证自动算通过。
+运行前停止 `dev.ps1` 启动的后端，避免 Maven 与运行进程共享 `backend/target/classes`。脚本执行 Python 40 项、Java 58 项、Vue 生产构建；不把 MySQL DDL/凭据验证自动算通过。
 
 浏览器验收（可选，不进入生产依赖）：
 
@@ -234,7 +234,7 @@ $env:PLAYWRIGHT_MODULE = "$PWD\runtime\browser-tools\node_modules\playwright-cor
 node scripts\browser-check.mjs
 ```
 
-当前实测：Python 40 passed、Java 50 passed、Vue build 通过、浏览器登录/五页/复核/M2 工单/取消确认/窄桌面与移动端无溢出。MySQL V4 仍未执行、未验证。详见 [verification.md](docs/verification.md)。
+当前实测（2026-11-12）：Python 40 passed、Java 全量（不含门控 `M2MysqlIT`）58 passed（0 failures/errors/skipped）、Vue build 通过、浏览器登录/五页/复核/M2 工单/取消确认/窄桌面与移动端无溢出。`M2MysqlIT` 单独运行时因未设置三个数据库环境变量而跳过 1 项；MySQL V1–V4 及真实事务仍未执行、未验证。详见 [verification.md](docs/verification.md)。
 
 ## 8. 来源许可与安全
 
@@ -265,4 +265,4 @@ node scripts\browser-check.mjs
 
 ### 9.3 当前基线
 
-Python **40** 项、Java **33** 项测试通过；Vue 构建通过；浏览器登录/五页/复核/移动端断言通过。MySQL V1/V2/V3 与真实 200 UP **未验证**；外部真实 Olist/IEEE 数据未导入，端到端只用合成烟测文件。验收对照 [acceptance-checklist.md](docs/acceptance-checklist.md) 与 [verification.md](docs/verification.md)。
+Python **40** 项、Java **58** 项测试通过；Vue 构建通过；浏览器登录/五页/复核/移动端断言通过。Java 的 **33** 项是历史 v2 基线（ApiContract 14 + ModelClient 11 + V2 8），不是当前实测。MySQL 的 V1–V4、真实 200 UP、`FOR UPDATE`、FK/CHECK、事务失败回滚及唯一键并发 **未验证**；外部真实 Olist/IEEE 数据未导入，端到端只用合成烟测文件。[acceptance-checklist.md](docs/acceptance-checklist.md) 是历史 v2 验收快照（仍写 33 项），不作为当前 M2 验收口径；当前结果见 [verification.md](docs/verification.md)。

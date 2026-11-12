@@ -12,7 +12,8 @@
 
 - 非 ADMIN 的列表与详情只返回已发布快照；不返回 `draft`、当前草稿字段、版本号或未发布差异。
 - 非 ADMIN 的关键字搜索按已发布快照的 `code/name` 匹配，不能通过草稿名称探测未发布配置。
-- 工单详情对未分派工单或本人/ADMIN 可见；已分派给他人时非 ADMIN 返回 `403`。
+- 工单详情对未分派工单或本人/ADMIN 可见；已分派给他人时非 ADMIN 的普通 `GET /api/v3/work-orders/{id}` 仍返回 `403 FORBIDDEN`。
+- 重复建单路径是例外：调用者看不到已有工单时返回 `404 WORK_ORDER_NOT_FOUND`，不返回工单详情。该 404 不改变普通详情的既有 403 契约。
 - 角色只来自服务端 `Authentication`；请求体不接收 `operatorId`/`reviewerId` 冒充。
 
 ## 2. 工单配置
@@ -119,9 +120,11 @@
 幂等语义：
 
 - 先按 `alert_id` 查已有工单，再检查告警是否可处理、配置是否 `ACTIVE`；因此同一 `configId` 已存在时，即使告警后来已解决或配置已停用，仍返回 `200` 和 `"idempotent": true` 及原工单；
-- 不同 `configId` 已存在：`409 WORK_ORDER_ALREADY_EXISTS_DIFFERENT_CONFIG`，不静默复用；
-- 建单在独立事务内按 `告警 → 配置` 固定顺序锁定，检查、`work_order` 插入、`CREATED` 事件和审计同事务提交；并发唯一键冲突回滚后，在事务外读取已有工单；
-- `UNIQUE(alert_id)` 仍由数据库最终兜底。
+- 已有工单对调用者不可见（非 ADMIN 且已分派给其他处理人）时，同配置重复建单返回 `404 WORK_ORDER_NOT_FOUND`，不返回 `alert`、`configSnapshot`、`events`、`resolutionReviewCandidates`、`resolutionReview`、`assigneeId`、`createdBy`、`updatedBy`、`dueAt`、`resolvedAt` 等详情字段；
+- 不同 `configId` 已存在且调用者可见：`409 WORK_ORDER_ALREADY_EXISTS_DIFFERENT_CONFIG`，不静默复用；调用者不可见时仍返回 `404 WORK_ORDER_NOT_FOUND`，不用 409 暴露工单存在性；
+- 建单在独立事务内按 `告警 → 配置` 固定顺序锁定，检查、`work_order` 插入、`CREATED` 事件和审计同事务提交；并发唯一键冲突回滚后，在事务外读取已有工单，再执行可见性检查；
+- 返回详情前按工单 ID 重新读取当前行，再执行重复建单专用可见性检查；写入器返回的未分派旧快照不能绕过“已分派给其他 reviewer”的 404；
+- `UNIQUE(alert_id)` 仍由数据库最终兜底；`findByAlertId` 的预检查只是快速路径，写入器内的锁、事务和唯一键仍是权威。
 
 建单时把配置快照、版本、SLA、`requiresReview`、`assignRole` 固化到工单；后续配置发布或修改不影响已有工单。`dueAt = createdAt + slaMinutes`（取已发布快照的 SLA，不取未发布草稿）。
 
@@ -196,9 +199,10 @@ OPEN / ASSIGNED / IN_PROGRESS → CANCELLED
 | 409 | `WORK_ORDER_TERMINAL`、`INVALID_WORK_ORDER_TRANSITION` |
 | 409 | `WORK_ORDER_VERSION_CONFLICT` |
 | 409 | `RESOLUTION_REVIEW_REQUIRED` 等复核错误 |
-| 403 | `FORBIDDEN`（角色/可见范围） |
+| 403 | `FORBIDDEN`（普通详情/列表等既有可见范围语义） |
+| 404 | `WORK_ORDER_NOT_FOUND`（仅重复建单路径对不可见已有工单；不改变普通详情的 403） |
 
-所有写请求需要 v2 CSRF 头。事件与审计在同一事务写入；失败回滚，不产生“有事件无审计”或反向状态。
+所有写请求需要 v2 CSRF 头。事件与审计在同一事务写入，设计上失败回滚，不产生“有事件无审计”或反向状态；失败注入测试已加入 `M2MysqlIT` 源码，但本次没有真实 MySQL 执行证据，不能声称已验证。
 
 ## 6. 数据库与验证边界
 
@@ -210,5 +214,6 @@ V4 仅新增 `work_order_config`、`work_order_config_version`、`work_order`、
 - `work_order_config_version` 唯一键 `uk_wocv_id_config_version(id, config_id, version_no)`，`work_order` 外键 `fk_wo_config_version_consistent(config_version_id, config_id, config_version_no)`，阻止版本 ID 与配置/版本号指向不同版本；
 - 保留原单列/双列外键兼容，新增组合外键作为权威一致性守卫；
 - 约束使用 `information_schema` 守卫逐条添加，干净库、已执行库和部分执行库均可重复执行 V4；不依赖 Flyway/Liquibase。
+- **V4 对预期结构的干净库、已执行库和缺少对象的部分执行库可重复执行；同名但定义错误的对象不会被自动修复。** 守卫只按对象名判断，不比对既有索引/外键/CHECK 的列、引用或定义；发布前仍需 schema 预检。
 
-截至本文件更新时：Java/Stub、Vue 构建和浏览器流程已实测；**MySQL 8 的 V4 仍未执行**，因为本机没有可用演示账号，不能声称 MySQL 通过。已提供环境变量门控的 `M2MysqlIT` 元数据/组合外键测试，未设置 `DB_URL` 时不会运行。
+截至本文件更新时：Java/Stub、Vue 构建和浏览器流程已实测；**MySQL 8 的 V1–V4 仍未执行**，因为本机没有可用演示账号，不能声称 MySQL 通过。已提供 `M2MysqlIT`，但只有在同时设置 `DB_URL`、`DB_USERNAME`、`DB_PASSWORD` 时才运行；本次三项均未设置，测试类被跳过，源码中的 8 个测试方法均未实际执行。真实事务回滚、`SELECT ... FOR UPDATE`、唯一键并发、FK/CHECK 和 `DuplicateKeyException` 转换仍未被本次执行证明。

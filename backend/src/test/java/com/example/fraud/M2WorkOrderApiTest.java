@@ -434,6 +434,168 @@ class M2WorkOrderApiTest {
     }
 
     @Test
+    void idempotentCreateDoesNotExposeWorkOrderAssignedToAnotherReviewer() throws Exception {
+        long config = publishedConfig("M2_WO_VISIBLE", "0.7", "[\"HIGH\"]", false);
+        long workOrderId = createWorkOrderAndId(1, config, "demo_reviewer", "REVIEWER");
+
+        mvc.perform(post("/api/v3/work-orders/" + workOrderId + "/transitions").with(csrf())
+                        .with(user("demo_reviewer").roles("REVIEWER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"transition\":\"CLAIM\",\"expectedVersion\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.assigneeId").value("demo_reviewer"));
+
+        // Another REVIEWER must not learn that this alert already has a work
+        // order, nor receive its alert/config/event/review/assignee detail.
+        mvc.perform(post("/api/v3/alerts/1/work-orders").with(csrf())
+                        .with(user("other_reviewer").roles("REVIEWER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"configId\":" + config + "}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("WORK_ORDER_NOT_FOUND"))
+                .andExpect(jsonPath("$.id").doesNotExist())
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.version").doesNotExist())
+                .andExpect(jsonPath("$.actions").doesNotExist())
+                .andExpect(jsonPath("$.alert").doesNotExist())
+                .andExpect(jsonPath("$.configSnapshot").doesNotExist())
+                .andExpect(jsonPath("$.events").doesNotExist())
+                .andExpect(jsonPath("$.resolutionReviewCandidates").doesNotExist())
+                .andExpect(jsonPath("$.resolutionReview").doesNotExist())
+                .andExpect(jsonPath("$.assigneeId").doesNotExist())
+                .andExpect(jsonPath("$.createdBy").doesNotExist())
+                .andExpect(jsonPath("$.updatedBy").doesNotExist())
+                .andExpect(jsonPath("$.dueAt").doesNotExist())
+                .andExpect(jsonPath("$.resolvedAt").doesNotExist());
+
+        long otherConfig = publishedConfig("M2_WO_VISIBLE_OTHER", "0.7", "[\"HIGH\"]", false);
+        mvc.perform(post("/api/v3/alerts/1/work-orders").with(csrf())
+                        .with(user("other_reviewer").roles("REVIEWER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"configId\":" + otherConfig + "}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("WORK_ORDER_NOT_FOUND"));
+
+        // The current handler keeps the existing 200 idempotent contract.
+        mvc.perform(post("/api/v3/alerts/1/work-orders").with(csrf())
+                        .with(user("demo_reviewer").roles("REVIEWER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"configId\":" + config + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(workOrderId))
+                .andExpect(jsonPath("$.idempotent").value(true))
+                .andExpect(jsonPath("$.configSnapshot").exists());
+
+        // ADMIN remains globally visible.
+        mvc.perform(post("/api/v3/alerts/1/work-orders").with(csrf())
+                        .with(user("demo_admin").roles("ADMIN"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"configId\":" + config + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(workOrderId))
+                .andExpect(jsonPath("$.idempotent").value(true));
+
+        // A visible caller may still receive the explicit different-config 409.
+        mvc.perform(post("/api/v3/alerts/1/work-orders").with(csrf())
+                        .with(user("demo_reviewer").roles("REVIEWER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"configId\":" + otherConfig + "}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("WORK_ORDER_ALREADY_EXISTS_DIFFERENT_CONFIG"));
+    }
+
+    @Test
+    void idempotentRetryHasSingleCreatedEventAndAudit() throws Exception {
+        long config = publishedConfig("M2_WO_SINGLE", "0.7", "[\"HIGH\"]", false);
+        long workOrderId = createWorkOrderAndId(1, config, "demo_reviewer", "REVIEWER");
+
+        mvc.perform(post("/api/v3/alerts/1/work-orders").with(csrf())
+                        .with(user("demo_reviewer").roles("REVIEWER"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"configId\":" + config + "}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.idempotent").value(true));
+
+        mvc.perform(get("/api/v3/work-orders/" + workOrderId)
+                        .with(user("demo_reviewer").roles("REVIEWER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.events", hasSize(1)))
+                .andExpect(jsonPath("$.events[0].eventType").value("CREATED"));
+
+        mvc.perform(get("/api/v3/alerts/1/work-orders")
+                        .with(user("demo_reviewer").roles("REVIEWER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].id").value(workOrderId));
+
+        String audit = mvc.perform(get("/api/v2/audit").param("size", "100")
+                        .with(user("demo_admin").roles("ADMIN")))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        int createdAuditCount = 0;
+        for (JsonNode item : objectMapper.readTree(audit).get("items")) {
+            if ("WORK_ORDER_CREATED".equals(item.get("action").asText())
+                    && String.valueOf(workOrderId).equals(item.get("targetId").asText())) {
+                createdAuditCount += 1;
+            }
+        }
+        org.junit.jupiter.api.Assertions.assertEquals(1, createdAuditCount);
+    }
+
+    @Test
+    void reviewAndCreateConcurrencyKeepsOneConsistentOutcome() throws Exception {
+        long config = publishedConfig("M2_WO_RACE_REVIEW", "0.7", "[\"HIGH\"]", false);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+        Future<MvcResult> createFuture = pool.submit(() -> {
+            start.await(5, TimeUnit.SECONDS);
+            return createWorkOrder(1, config, "demo_reviewer", "REVIEWER").andReturn();
+        });
+        Future<MvcResult> reviewFuture = pool.submit(() -> {
+            start.await(5, TimeUnit.SECONDS);
+            return mvc.perform(post("/api/v1/alerts/1/reviews").with(csrf())
+                            .with(user("demo_reviewer").roles("REVIEWER"))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"reviewResult\":\"CONFIRMED\",\"comment\":\"并发复核\"," +
+                                    "\"expectedVersion\":1}"))
+                    .andReturn();
+        });
+        start.countDown();
+        MvcResult createResult = createFuture.get(10, TimeUnit.SECONDS);
+        MvcResult reviewResult = reviewFuture.get(10, TimeUnit.SECONDS);
+        pool.shutdown();
+        assertTrue(pool.awaitTermination(10, TimeUnit.SECONDS), "concurrency pool must terminate");
+
+        int createStatus = createResult.getResponse().getStatus();
+        int reviewStatus = reviewResult.getResponse().getStatus();
+        org.junit.jupiter.api.Assertions.assertEquals(201, reviewStatus);
+        assertTrue(createStatus == 201 || createStatus == 409,
+                "create must be 201 or 409, was " + createStatus);
+
+        JsonNode createBody = objectMapper.readTree(createResult.getResponse().getContentAsString());
+        if (createStatus == 409) {
+            org.junit.jupiter.api.Assertions.assertEquals("ALERT_NOT_ACTIONABLE",
+                    createBody.get("code").asText());
+            mvc.perform(get("/api/v3/alerts/1/work-orders")
+                            .with(user("demo_admin").roles("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$", hasSize(0)));
+        } else {
+            long workOrderId = createBody.get("id").asLong();
+            JsonNode reviewBody = objectMapper.readTree(reviewResult.getResponse().getContentAsString());
+            Instant workOrderCreatedAt = Instant.parse(createBody.get("createdAt").asText());
+            Instant reviewCreatedAt = Instant.parse(reviewBody.get("reviewedAt").asText());
+            org.junit.jupiter.api.Assertions.assertFalse(workOrderCreatedAt.isAfter(reviewCreatedAt),
+                    "a resolved alert must not get a work order created after the review");
+            mvc.perform(get("/api/v3/work-orders/" + workOrderId)
+                            .with(user("demo_admin").roles("ADMIN")))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.events", hasSize(1)))
+                    .andExpect(jsonPath("$.events[0].eventType").value("CREATED"));
+        }
+    }
+
+    @Test
     void m2EndpointsRequireAuthenticationAndCsrf() throws Exception {
         mvc.perform(get("/api/v3/work-orders"))
                 .andExpect(status().isUnauthorized())

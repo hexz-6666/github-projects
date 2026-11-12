@@ -15,11 +15,12 @@
 ### V4 可重复执行与部分执行
 
 - V4 用 `CREATE TABLE IF NOT EXISTS` 建表，并在文件末尾用 `information_schema` 守卫逐条添加唯一键/外键；不包含无条件 `ADD CONSTRAINT`，不删表、不删数据。
+- **V4 对预期结构的干净库、已执行库和缺少对象的部分执行库可重复执行；同名但定义错误的对象不会被自动修复。** 守卫只检查对象名，不验证既有对象的列顺序、引用表/列或 CHECK 定义；因此“可重复执行”不等于“任意 schema 漂移可修复”。
 - **干净库**：执行一次建表并补齐约束；再次执行时守卫跳过已存在项，应成功。
 - **已执行 V4 的库**：再次执行应只做守卫检查；不要另写 `ALTER TABLE ... ADD CONSTRAINT` 重复添加。
-- **部分执行**：若建表成功但约束未补齐，再次执行 V4 会补缺失的 `uk_review_id_alert`、`uk_wocv_id_config_version`、`fk_woc_published_version`、`fk_wo_config_version_consistent`、`fk_wo_resolution_review_alert`。
+- **部分执行**：若建表成功但约束未补齐，再次执行 V4 会补缺失的 `uk_review_id_alert`、`uk_wocv_id_config_version`、`fk_woc_published_version`、`fk_wo_config_version_consistent`、`fk_wo_resolution_review_alert`。若同名对象存在但定义错误，守卫不会发现或修复，必须先人工核验并另行变更。
 - V4 使用 MySQL 客户端 `source` 执行；`PREPARE`/`EXECUTE` 语句要求 MySQL 8.0.16+。项目没有 Flyway/Liquibase schema history，因此不把“文件可重复执行”等同于“迁移工具已接管”。
-- MySQL 门控测试（不填 `DB_URL` 时整类跳过）：在 `backend` 下设置 `DB_URL`、`DB_USERNAME`、`DB_PASSWORD` 后运行 `mvn -q "-Dtest=M2MysqlIT" test`。它只读检查组合索引/外键，并在回滚事务中尝试写入违规版本三元组和跨告警复核；不会清理业务数据。
+- MySQL 门控测试在**同时**设置 `DB_URL`、`DB_USERNAME`、`DB_PASSWORD` 时才运行；缺任一项整类跳过。可在 `backend` 下运行 `mvn -q "-Dtest=M2MysqlIT" test`，也可在仓库根目录运行 `mvn -f backend/pom.xml -q "-Dtest=M2MysqlIT" test`；V4 路径按 Maven `basedir`/`user.dir` 及其父目录解析，不依赖固定 `../database` 启动目录。测试会先用 V4 守卫建/补表，独立创建 `IT-` 前缀的订单/特征/评分/告警/配置 fixture，检查组合索引/外键/CHECK 的精确列与引用，再尝试违规版本三元组、非法状态、跨告警复核、唯一键冲突翻译、两个建单线程、建单/复核并发，以及超长 `request_id` 使 event 写入失败后的回滚断言。清理只针对本次 fixture 行：审计按本次唯一 `request_id` + `target_type='WORK_ORDER'` + `action='WORK_ORDER_CREATED'` 删除，不按裸 `target_id`，不删除 V2 种子或既有业务历史。该测试 2026-11-12 的门控运行被跳过（三个变量均未设置），没有连接数据库，8 个测试方法均未实际执行。
 - 如果**历史数据已违规**，组合外键会拒绝添加。先用只读查询定位，不要自动删数据或清空表：
   - 复核跨告警：`work_order.resolution_review_id` 对应的 `ads_alert_review.alert_id` 与 `work_order.alert_id` 不一致；
   - 版本不一致：`work_order.config_version_id` 对应的版本行的 `(config_id, version_no)` 与工单上的 `(config_id, config_version_no)` 不一致。
@@ -55,4 +56,4 @@ PowerShell 不支持 `< file` 输入重定向，以上使用 `mysql.exe` 的 `so
 
 ## 未验证范围
 
-本机 MySQL80 服务和 3306 端口已发现，但没有可用的独立演示账号，未猜测密码。**未实际执行** V1/V2/V3、约束、索引、JSON、UTC、导入、事务、评分写入或健康 `UP`；不据此宣称 MySQL 模式通过。获得凭据后按根目录 README §5 使用 `scripts/dev.ps1 -WithMySql` 验证，并更新 [verification.md](../docs/verification.md)。
+本机 MySQL80 服务和 3306 端口已发现，但没有可用的独立演示账号，未猜测密码。**未实际执行** V1–V4、约束、索引、JSON、UTC、导入、事务失败回滚、评分写入或健康 `UP`；`M2MysqlIT` 的 8 个测试方法均未实际运行，不据此宣称 MySQL 模式通过。获得凭据后按根目录 README §5 使用 `scripts/dev.ps1 -WithMySql` 验证，并更新 [verification.md](../docs/verification.md)。

@@ -155,11 +155,19 @@ public class StubFraudStore implements FraudStore {
 
     @Override
     public Optional<AlertRecord> findAlertForUpdate(long alertId) {
-        // Stub has no DB transaction; the create writer serializes stub creation
-        // and this read shares the review lock with review().
+        // The read itself is only one critical section. The create writer holds
+        // alertMutationLock() across the complete stub create boundary.
         synchronized (reviewLock) {
             return Optional.ofNullable(alerts.get(alertId));
         }
+    }
+
+    @Override
+    public Object alertMutationLock(long alertId) {
+        // Global stub lock by design: it also serializes review() and imported
+        // order writes. This increases stub contention but keeps create/review
+        // observably serial without pretending to be a MySQL transaction.
+        return reviewLock;
     }
 
     @Override

@@ -70,9 +70,12 @@ public class WorkOrderCreateWriter {
     public Result create(long alertId, long configId, String actorId, String actorRole,
                          String requestId) {
         if ("stub".equals(store.storageMode())) {
-            // Stub has no transaction manager; serialize the check+insert window
-            // so the local contract demo has the same observable semantics.
-            synchronized (this) {
+            // Stub has no transaction manager. Hold the same lock used by
+            // StubFraudStore.review() across the complete create boundary:
+            // alert read, idempotency check, config checks, insert, event and
+            // audit. MySQL keeps using SELECT ... FOR UPDATE inside a real
+            // transaction and must not use this JVM lock.
+            synchronized (fraudStore.alertMutationLock(alertId)) {
                 return createInTransaction(alertId, configId, actorId, actorRole, requestId);
             }
         }

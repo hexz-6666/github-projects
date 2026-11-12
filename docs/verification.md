@@ -1,6 +1,6 @@
 # 实际验证记录
 
-**验证日期：2026-11-09（Asia/Shanghai）。** 本文件记录本机实际执行的结果，不代表生产验收，也不把 stub 当作 MySQL 成功。除特别说明外，运行数据为独立虚构/合成夹具；未下载官方 Olist/IEEE-CIS 数据。2026-11-09 增补 v3 M1 登录页、记住账号、壳层与移动端抽屉收尾验收。
+**验证日期：2026-11-09（Asia/Shanghai）；2026-11-12 增补 M2 可见性/锁补丁。** 本文件记录本机实际执行的结果，不代表生产验收，也不把 stub 当作 MySQL 成功。除特别说明外，运行数据为独立虚构/合成夹具；未下载官方 Olist/IEEE-CIS 数据。2026-11-09 增补 v3 M1 登录页、记住账号、壳层与移动端抽屉收尾验收。
 
 ## 1. 环境与范围
 
@@ -8,7 +8,7 @@
 - MySQL 8.0 服务与 3306 端口存在，但**没有可用演示账号**，未猜密码。
 - 无 Docker/Kafka/Hadoop/Kubernetes；无生产 IAM、TLS、KMS、备份恢复实战。
 - v2 代码已实现五页、会话认证/RBAC/CSRF、导入/质量/审计、IEEE 训练评测；v1 契约保持。
-- v3 M1 已实现登录页/记住账号/紧凑壳层和现有五页适配；M1 未新增后端、API、数据库迁移、工单、日志中心、看板或 ECharts。**2026-11-09 增补 M2：工单/配置 API、V4（仅静态）、工单前端与浏览器流程；随后完成 M2 corrective patch（建单行锁/幂等顺序、组合外键、服务端 actions、取消确认、验收测试）；M3 尚未开始。**
+- v3 M1 已实现登录页/记住账号/紧凑壳层和现有五页适配；M1 未新增后端、API、数据库迁移、工单、日志中心、看板或 ECharts。**2026-11-09 增补 M2：工单/配置 API、V4（仅静态）、工单前端与浏览器流程；随后完成 M2 corrective patch（建单行锁/幂等顺序、组合外键、服务端 actions、取消确认、验收测试）；2026-11-12 增补 M2 可见性/Stub 锁补丁；M3 尚未开始。**
 
 ## 2. 自动化构建与测试
 
@@ -23,7 +23,7 @@
 | 项目 | 实际结果 | 范围 |
 |---|---|---|
 | Python pytest | **40 passed**，1 条 Starlette `BlockingPortal` 弃用警告 | v1 32 + v2 训练/评测 8 |
-| Java Maven test（M1 当时） | **33 passed，0 failures/errors** | ApiContract 14 + ModelClient 11 + V2ApiTest 8；M2 corrective patch 后最新为 **50 passed**，见 §8 |
+| Java Maven test（M1 当时） | **33 passed，0 failures/errors** | ApiContract 14 + ModelClient 11 + V2ApiTest 8；这是历史 v2 基线；M2 最终整改后为 **58 passed**，见 §8 |
 | Vue production build（M1 收尾最终） | **通过**，2060 modules，JS **117.47 kB / gzip 42.62 kB**，CSS **19.49 kB / gzip 5.11 kB**，登录 WebP 33.99 kB | Vue 3.5.45 / Vite 6.4.5 |
 | M1 收尾前检查点 | 2060 modules，JS 116.84 kB / gzip 42.40 kB，CSS 19.36 kB / gzip 5.09 kB | 收尾增加焦点/ARIA/作用域样式后为上一行最终值 |
 | `npm audit --audit-level=moderate` | **0 vulnerabilities** | 仅前端锁定依赖，不等于 Java/Python 全依赖无漏洞 |
@@ -120,9 +120,11 @@ M1 收尾通过断言：
 ### MySQL（明确未验收）
 
 - **未执行** V1/V2/V3/V4、`verify_synthetic.sql`；未验证 6+6+4 张表、约束、索引、外键、JSON、UTC、导入、事务、并发幂等。
+- **V4 对预期结构的干净库、已执行库和缺少对象的部分执行库可重复执行；同名但定义错误的对象不会被自动修复。** 守卫只检查对象名，不比对既有索引/外键/CHECK 的列、引用表、列或定义。
 - 未达到 200 `UP`；`storageMode=mysql` 的真实连接/查询/评分/复核未运行。
+- `M2MysqlIT` 的 8 个测试方法均未实际执行；`FOR UPDATE`、FK、CHECK、事务失败回滚（event 超长 `request_id` 场景）、唯一键并发和 `DuplicateKeyException` 翻译没有被本次执行证明。
 - 阻塞原因：无用户提供的独立演示库最小权限账号。端口开放不等于可登录。
-- 获得凭据后按 [database/README.md](../database/README.md) 与 [deployment.md](deployment.md) 执行，再更新本文件与验收清单。
+- 获得凭据后按 [database/README.md](../database/README.md) 与 [deployment.md](deployment.md) 执行，再更新本文件与当前交接；`docs/acceptance-checklist.md` 是历史 v2 快照，不应直接改写为当前结果。
 
 ### 其他
 
@@ -134,20 +136,41 @@ M1 收尾通过断言：
 - JDK 8 + Spring Boot 2.7.18 已结束公开维护；未做 Java/Python 全依赖漏洞扫描。
 - 浏览器断言不是完整 WCAG/视觉审计；人工 Ctrl+C 路径未模拟。
 
-## 8. 2026-11-09 M2 增补与 corrective patch
+## 8. 2026-11-09 M2 增补、corrective patch 与 2026-11-12 最终整改
 
-本节只记录 M2 的实际执行结果；M1 的 33 条 Java 结果是当时快照。
+本节只记录 M2 的实际执行结果；M1 的 33 条 Java 结果是历史 v2 快照。
+
+### 8.1 2026-11-12 实际重跑结果
 
 | 项目 | 实际结果 |
 |---|---|
-| Java 全量 `mvn test` | **50 passed，0 failures/errors，0 skipped**；包含 M2ConfigApiTest 6、M2WorkOrderApiTest 11 |
-| Python `pytest model-service -q` | **40 passed**，1 条 Starlette 弃用警告 |
-| Vue production build | **通过**；2063 modules；JS 153.45 kB / gzip 51.74 kB；CSS 23.19 kB / gzip 5.95 kB |
-| Browser `browser-check.mjs` | **通过**；1440/901/940/980/390 视口；M1 五页回归 + M2 转单/领取/开始/完成/取消确认 + 只读配置预览 + 队列/详情；`pageErrors=[]`；无横向溢出 |
-| MySQL V4 | **未执行、未验证**；无可用演示账号；`M2MysqlIT` 仅在设置 `DB_URL` 时运行，未运行 |
+| Java 全量 `mvn test`（14:49，Surefire 报告，不含门控 `M2MysqlIT`） | **58 tests，58 passed，0 failures，0 errors，0 skipped**；ApiContract 14 + M2ConfigApiTest 6 + M2WorkOrderApiTest 14 + M2WorkOrderServiceTest 5 + ModelClient 11 + V2ApiTest 8 |
+| 上述各测试类 Surefire 耗时 | 12.368s、4.512s、9.032s、0.253s、0.054s、4.809s（合计约 31.03s，不含 Maven/JVM 启动） |
+| Python `.venv\Scripts\python -m pytest model-service -q` | **40 passed**，1 条 Starlette 弃用警告；0.79s |
+| Vue production build | **通过**；2063 modules；JS 153.45 kB / gzip 51.74 kB；CSS 23.19 kB / gzip 5.95 kB；2.24s |
+| Browser `browser-check.mjs`（同日最终重跑） | **通过**；1440/901/940/980/390 视口；M1 五页回归 + M2 转单/领取/开始/完成/取消确认 + 只读配置预览 + 队列/详情；`pageErrors=[]`；无横向溢出 |
+| `mvn -q "-Dtest=M2MysqlIT" test`（14:50） | **1 test，1 skipped，0 failures/errors**；`DB_URL`、`DB_USERNAME`、`DB_PASSWORD` 均未设置，类级条件在 Spring 上下文前跳过；未连接数据库 |
+| MySQL V4 / 真实事务 | **未执行、未验证**；无可用演示账号；不能把上面 58 条 Stub 结果当成 MySQL 成功 |
+
+58 项是原 57 项加上本次新增的 writer 旧快照回归测试（`M2WorkOrderServiceTest` 从 4 项变为 5 项），不是把历史 33 项当成当前结果；README 中的 33 项已明确标为历史 v2 基线。
+
+`M2MysqlIT` 源码现在有 8 个 `@Test` 方法（外加 `@BeforeAll` 执行 V4）；本次报告只看到类级跳过，因此 8 个方法均**未实际运行**。其中失败事务测试使用超长 `request_id` 让 event 写入失败，源码存在，但没有真实 MySQL 执行证据。
+
+### 8.2 本次补充补丁覆盖
+
+- 普通 `GET /api/v3/work-orders/{id}` 的 403 契约保持不变；只有重复建单路径对不可见已有工单返回 `404 WORK_ORDER_NOT_FOUND`。
+- 新增跨用户重复建单测试：A 领取后，B 同配置得到 404 且无 `alert`/`configSnapshot`/`events`/`resolutionReviewCandidates`/`resolutionReview`/`assigneeId`/`createdBy`/`updatedBy`/`dueAt`/`resolvedAt`；B 用不同配置仍得到 404 而非 409；原处理人和 ADMIN 仍得到 200 `idempotent=true`；可见调用者的不同配置仍为 409。
+- 新增重试副作用测试：重复建单后只有 1 个工单、1 条 `CREATED` 事件、1 条 `WORK_ORDER_CREATED` 审计。
+- 新增确定性并发测试：同一告警并发 `create` 与 `review`，不使用随机 sleep；复核成功，建单为 201 或 409 `ALERT_NOT_ACTIONABLE`；若建单成功，其 `createdAt` 不晚于复核 `reviewedAt`，且只有 1 个工单/1 个 `CREATED` 事件。
+- 新增 `M2WorkOrderServiceTest`（Mockito）：`DuplicateWorkOrderException` 回退不可见 → 404；写入器抛出的**精确** `WORK_ORDER_ALREADY_EXISTS_DIFFERENT_CONFIG` 在不可见时 → 404、可见时保留 409；可见 owner 回退 → 幂等结果。未宽泛捕获所有 `ApiException`。
+- 修复建单返回详情的旧快照竞态：writer 返回“未分派”旧记录、而 `workOrderStore.findById(id)` 已是“分派给其他 reviewer”时，最终返回 404 而非详情；`createDetail(long id, Authentication)` 通过 ID 重新读取，普通详情 `detail(id)` 仍保持 403。
+- Stub 建单与复核共用 `alertMutationLock`（`reviewLock`），覆盖告警读取、幂等、配置检查、插入、`CREATED` 事件和审计边界；MySQL 仍使用 `SELECT ... FOR UPDATE` 和真实事务，没有用 JVM 锁替代 InnoDB。
+- Stub 只证明可观察语义，不证明事务回滚或 MySQL 并发；MySQL 专用断言仍属未验证范围。
 
 M2 浏览器实际覆盖：告警详情显式选择配置、创建工单、领取、开始、填写结论完成、工单详情与队列、非 ADMIN 只读配置页及“预览匹配”；ADMIN 取消工单时点击“返回”不发送 `/transitions`，点击“确认取消”只发送一次并进入 `CANCELLED`；901/940/980px 窄桌面与短视口无文档级横向溢出；M1 原有订单筛选/告警复核/质量/模型/健康/抽屉/记住账号断言继续通过。
 
-M2 corrective patch 新增测试：同配置幂等优先于“配置已停用/告警已解决”；`alertWorkOrders` 能查到第 100 条之后的旧工单；详情 `actions` 按角色/处理人/终态计算；两个并发建单只产生一个新建和一个幂等；M2 匿名 401、缺失 CSRF 403。MySQL 门控测试覆盖组合唯一键/外键元数据，以及错误版本三元组、跨告警复核被数据库拒绝。
+M2 corrective patch 既有测试继续覆盖：同配置幂等优先于“配置已停用/告警已解决”；`alertWorkOrders` 能查到第 100 条之后的旧工单；详情 `actions` 按角色/处理人/终态计算；两个并发建单只产生一个新建和一个幂等；M2 匿名 401、缺失 CSRF 403。`M2MysqlIT` 源码已扩展为自包含 fixture、V4 执行两次、精确索引/外键/CHECK 预检、违规版本三元组/非法状态/跨告警复核、唯一键翻译、两个建单线程、建单/复核并发、按 `CreateResult.isIdempotent()` 返回 200/201，以及超长 `request_id` 触发 event 写入失败后的回滚断言；但**8 个方法本次均未运行**，不能据此宣称 MySQL 通过。
+
+`docs/acceptance-checklist.md` 是历史 v2 验收快照（仍写 Java 33 项，且没有 M2/V4 章节），不是当前 M2 验收口径，未改写该历史文件；当前结果以本文和 [handoff-latest.md](handoff-latest.md) 为准。
 
 M2 新增 API 契约见 [api-contract-v3-work-orders.md](api-contract-v3-work-orders.md)。截图新增 `runtime/ui-v3-work-order-detail-1440.png`、`runtime/ui-v3-work-order-cancel-1440.png`、`runtime/ui-v3-work-order-configs-1440.png`、`runtime/ui-v3-work-orders-1440.png`、`ui-v3-work-orders-901/940/980.png` 及对应 390 版本；仍不声称人工视觉审阅。
