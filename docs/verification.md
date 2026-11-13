@@ -8,7 +8,7 @@
 - MySQL 8.0 服务与 3306 端口存在，但**没有可用演示账号**，未猜密码。
 - 无 Docker/Kafka/Hadoop/Kubernetes；无生产 IAM、TLS、KMS、备份恢复实战。
 - v2 代码已实现五页、会话认证/RBAC/CSRF、导入/质量/审计、IEEE 训练评测；v1 契约保持。
-- v3 M1 已实现登录页/记住账号/紧凑壳层和现有五页适配；M1 未新增后端、API、数据库迁移、工单、日志中心、看板或 ECharts。**2026-11-09 增补 M2：工单/配置 API、V4（仅静态）、工单前端与浏览器流程；随后完成 M2 corrective patch（建单行锁/幂等顺序、组合外键、服务端 actions、取消确认、验收测试）；2026-11-12 增补 M2 可见性/Stub 锁补丁；M3 尚未开始。**
+- v3 M1 已实现登录页/记住账号/紧凑壳层和现有五页适配；M1 未新增后端、API、数据库迁移、工单、日志中心、看板或 ECharts。**2026-11-09 增补 M2：工单/配置 API、V4（仅静态）、工单前端与浏览器流程；随后完成 M2 corrective patch（建单行锁/幂等顺序、组合外键、服务端 actions、取消确认、验收测试）；2026-11-12 增补 M2 可见性/Stub 锁补丁；M3 已实现结构化运行日志、ADMIN 查询/健康 API 和前端浮窗。**
 
 ## 2. 自动化构建与测试
 
@@ -23,7 +23,7 @@
 | 项目 | 实际结果 | 范围 |
 |---|---|---|
 | Python pytest | **40 passed**，1 条 Starlette `BlockingPortal` 弃用警告 | v1 32 + v2 训练/评测 8 |
-| Java Maven test（M1 当时） | **33 passed，0 failures/errors** | ApiContract 14 + ModelClient 11 + V2ApiTest 8；这是历史 v2 基线；M2 最终整改后为 **58 passed**，见 §8 |
+| Java Maven test（M1 当时） | **33 passed，0 failures/errors** | ApiContract 14 + ModelClient 11 + V2ApiTest 8；这是历史 v2 基线；M2 为 58，M3 为 **74 passed**，见 §8/§9 |
 | Vue production build（M1 收尾最终） | **通过**，2060 modules，JS **117.47 kB / gzip 42.62 kB**，CSS **19.49 kB / gzip 5.11 kB**，登录 WebP 33.99 kB | Vue 3.5.45 / Vite 6.4.5 |
 | M1 收尾前检查点 | 2060 modules，JS 116.84 kB / gzip 42.40 kB，CSS 19.36 kB / gzip 5.09 kB | 收尾增加焦点/ARIA/作用域样式后为上一行最终值 |
 | `npm audit --audit-level=moderate` | **0 vulnerabilities** | 仅前端锁定依赖，不等于 Java/Python 全依赖无漏洞 |
@@ -119,10 +119,10 @@ M1 收尾通过断言：
 
 ### MySQL（明确未验收）
 
-- **未执行** V1/V2/V3/V4、`verify_synthetic.sql`；未验证 6+6+4 张表、约束、索引、外键、JSON、UTC、导入、事务、并发幂等。
+- **未执行** V1–V5、`verify_synthetic.sql`；未验证 6+6+4 张表加 `ops_log_event`、约束、索引、外键、JSON、UTC、导入、事务、运行日志游标/保留、并发幂等。
 - **V4 对预期结构的干净库、已执行库和缺少对象的部分执行库可重复执行；同名但定义错误的对象不会被自动修复。** 守卫只检查对象名，不比对既有索引/外键/CHECK 的列、引用表、列或定义。
-- 未达到 200 `UP`；`storageMode=mysql` 的真实连接/查询/评分/复核未运行。
-- `M2MysqlIT` 的 8 个测试方法均未实际执行；`FOR UPDATE`、FK、CHECK、事务失败回滚（event 超长 `request_id` 场景）、唯一键并发和 `DuplicateKeyException` 翻译没有被本次执行证明。
+- 未达到 200 `UP`；`storageMode=mysql` 的真实连接/查询/评分/复核/日志未运行。
+- `M2MysqlIT` 的 8 个、`M3OpsLogMysqlIT` 的 5 个测试方法均未实际执行；`FOR UPDATE`、FK、CHECK、事务失败回滚（event 超长 `request_id` 场景）、唯一键并发、日志保留清理和 `DuplicateKeyException` 翻译没有被本次执行证明。
 - 阻塞原因：无用户提供的独立演示库最小权限账号。端口开放不等于可登录。
 - 获得凭据后按 [database/README.md](../database/README.md) 与 [deployment.md](deployment.md) 执行，再更新本文件与当前交接；`docs/acceptance-checklist.md` 是历史 v2 快照，不应直接改写为当前结果。
 
@@ -174,3 +174,38 @@ M2 corrective patch 既有测试继续覆盖：同配置幂等优先于“配置
 `docs/acceptance-checklist.md` 是历史 v2 验收快照（仍写 Java 33 项，且没有 M2/V4 章节），不是当前 M2 验收口径，未改写该历史文件；当前结果以本文和 [handoff-latest.md](handoff-latest.md) 为准。
 
 M2 新增 API 契约见 [api-contract-v3-work-orders.md](api-contract-v3-work-orders.md)。截图新增 `runtime/ui-v3-work-order-detail-1440.png`、`runtime/ui-v3-work-order-cancel-1440.png`、`runtime/ui-v3-work-order-configs-1440.png`、`runtime/ui-v3-work-orders-1440.png`、`ui-v3-work-orders-901/940/980.png` 及对应 390 版本；仍不声称人工视觉审阅。
+
+## 9. 2026-11-12 M3 结构化运行日志
+
+### 9.1 实际结果
+
+| 项目 | 实际结果 |
+|---|---|
+| Java 全量 `mvn test`（10:02，不含门控 MySQL IT） | **74 tests，74 passed，0 failures，0 errors，0 skipped**；M2 58 + M3OpsLogApiTest 6 + M3OpsLogServiceTest 8 + M3OpsLogResilienceTest 2 |
+| 各测试类耗时 | ApiContract 14.607s、M2Config 5.615s、M2WorkOrderApi 12.778s、M2WorkOrderService 0.157s、M3OpsLogApi 4.106s、M3OpsLogResilience 1.338s、M3OpsLogService 0.004s、ModelClient 0.056s、V2 5.645s |
+| Python `.venv\Scripts\python -m pytest model-service -q` | **40 passed**，1 条 Starlette 弃用警告；上一轮 0.89s；本轮未改 Python |
+| Vue production build | **通过**；2064 modules；JS 163.72 kB / gzip 54.69 kB；CSS 26.20 kB / gzip 6.53 kB；2.27s（仅后端/测试/文档改动后的构建） |
+| Browser `browser-check.mjs` | **未在本轮重跑**；上一轮通过记录仍保留，不能声称本轮重新通过浏览器验收 |
+| `M2MysqlIT` | **1 test，1 skipped**；8 个方法仍未在真实 MySQL 执行 |
+| `M3OpsLogMysqlIT`（10:03） | **1 test，1 skipped，0 failures/errors**；三个 DB 变量均未设置，未连接数据库；5 个测试方法未实际执行，canary 未实测 |
+| MySQL V5 / 真实日志 | **未执行、未验证**；游标、保留清理、安全字段/canary、事务行为不能据 Stub 声称通过 |
+
+### 9.2 M3 覆盖
+
+- V5 只新增 `ops_log_event`，独立于 `audit_event`；Stub 有界 30 天/50,000 条。
+- GET 日志/健康仅 ADMIN；默认 `minLevel=WARN`；ADMIN 最低 INFO；DEBUG 不产生、不可查询；非法 cursor/时间范围/limit 返回 400。
+- 客户端上报仅固定字段；level/摘要服务端映射；`relatedRequestId` 仅 UUID 格式校验、精确查询；actor 取 Session；20 次/分钟单实例内存限流；401 不上报；未知字段/禁止 code/非法 route 400。
+- 限流窗口改为有界 4,096 表；只清理过期窗口，不淘汰有效窗口；容量满且无过期项时新窗口 429；20/21 次、过期回收、容量拒绝测试通过。
+- 日志写入 REQUIRES_NEW + 捕获 RuntimeException；业务成功不受影响；不捕获 JVM Error；ops 接口不递归写日志；健康 DEGRADED 和限频兜底告警。
+- `OpsLogHealth` 初始 DEGRADED、探测成功 UP、写入失败 DEGRADED、成功恢复 UP、探测失败 DEGRADED 均已有确定性单测。
+- 业务事件成功在事务提交/调用返回后记录；失败不产生成功事件；配置校验失败/发布失败、工单拒绝均无 `*_COMPLETED`。
+- 专用保留任务分批 1,000、每次最多 10 批；不在业务请求路径做全表计数。
+- 前端只 ADMIN 浮窗，打开且未暂停每 5 秒轮询；关闭/暂停停止；无服务器删除。
+
+### 9.3 文档口径
+
+`docs/acceptance-checklist.md` 仍是历史 v2 快照（Java 33、无 M2/M3/V4/V5 章节），本次未改写；当前 M3 验收以本文和 [handoff-latest.md](handoff-latest.md) 为准。
+
+### 9.4 未复现的测试抖动
+
+一次中间全量运行在 `M3OpsLogApiTest.configValidationAndPublishFailuresDoNotLeaveCompletedEvents` 的成功发布事件断言上失败；同一方法单独重跑、随后两次全量均通过，未再复现。本轮又在无 sleep、无随机延迟的情况下精确重跑该方法 10 次，10/10 通过；并增加成功发布后的 `/api/v3/ops/health` `UP` 与 `writeFailureCount=0` 诊断断言。根因仍未定位，此次未复现；该现象可能与本地 dev 进程共享 `target/classes` 或上下文时序有关，但没有证据证明。不能声称已修复或绝对无偶发失败。

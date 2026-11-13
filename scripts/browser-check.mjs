@@ -608,7 +608,57 @@ try {
     `Confirming cancel sent ${cancelTransitionRequests} transition requests`)
   page.off('request', countCancelTransition)
   await capture(page, 'ui-v3-work-order-cancel-1440.png', 'Cancelled work order')
+
+  // M3: admin operational log window, default WARN, pause stops polling.
+  const logButton = page.getByRole('button', { name: /打开运行日志/ })
+  await logButton.waitFor()
+  const firstLogResponse = page.waitForResponse((response) => (
+    response.url().includes('/api/v3/ops/logs?') && response.request().method() === 'GET'
+  ))
+  await logButton.click()
+  await firstLogResponse
+  await page.getByRole('heading', { name: '运行日志' }).waitFor()
+  assert(await page.locator('.ops-log-filters select').first().isVisible(),
+    'Operational log filters are missing')
+  assert((await page.locator('.ops-log-filters select').nth(1).inputValue()) === 'WARN',
+    'Operational log default minimum level is not WARN')
+  const infoLogResponse = page.waitForResponse((response) => (
+    response.url().includes('/api/v3/ops/logs?') && response.url().includes('minLevel=INFO')
+  ))
+  await page.locator('.ops-log-filters select').nth(1).selectOption('INFO')
+  await infoLogResponse
+  await page.locator('.ops-log-item').first().waitFor()
+  assert((await page.locator('.ops-log-item').count()) >= 1, 'Operational log INFO filter returned no rows')
+  await capture(page, 'ui-v3-ops-log-1440.png', 'Admin operational log window')
+  const logRequests = []
+  const countLogRequests = (request) => {
+    if (request.method() === 'GET' && request.url().includes('/api/v3/ops/logs?')) {
+      logRequests.push(request.url())
+    }
+  }
+  page.on('request', countLogRequests)
+  await page.getByRole('button', { name: '暂停' }).click()
+  const pausedLogCount = logRequests.length
+  await page.waitForTimeout(5500)
+  assert(logRequests.length === pausedLogCount, 'Paused operational log kept polling')
+  await page.getByRole('button', { name: '继续' }).click()
+  await page.getByRole('button', { name: '清屏' }).click()
+  await page.getByText('当前筛选条件下没有日志。').waitFor()
+  page.off('request', countLogRequests)
+  await page.getByRole('button', { name: '关闭运行日志' }).click()
+  await page.getByRole('heading', { name: '运行日志' }).waitFor({ state: 'detached' })
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await logButton.click()
+  await page.getByRole('heading', { name: '运行日志' }).waitFor()
+  await noHorizontalOverflow(page, 'Operational log mobile')
+  await page.screenshot({ path: `${outputDir}/ui-v3-ops-log-390.png`, fullPage: true })
+  await page.getByRole('button', { name: '关闭运行日志' }).click()
+  await page.setViewportSize({ width: 1440, height: 1000 })
+
   await switchUser('demo_reviewer', demoPassword)
+  assert((await page.getByRole('button', { name: /打开运行日志/ }).count()) === 0,
+    'Reviewer must not see the operational log entry')
 
   await navigateDesktop(page, '工单配置', '工单配置')
   await waitForNoLoading(page, '正在加载工单配置')
@@ -752,6 +802,7 @@ try {
     logoutInvalidation: 'passed (old JSESSIONID returns 401)',
     fivePages: 'passed (orders filter/reset, alerts filter + detail review, quality read-only, models read-only, health refresh)',
     m2WorkOrders: 'passed (explicit alert conversion, claim/start/resolve, cancel dismissal/confirmation, read-only config preview, queue/detail at 1440/901/940/980/390)',
+    m3OpsLog: 'passed (ADMIN entry, WARN default, pause stops polling, clear view, 1440/390, reviewer hidden)',
     shellStyles: 'passed (scoped page-head/filters/table/card; screenshots at 1440 and 390)',
     drawer: 'passed (off-canvas, aria-expanded/controls, inert/aria-hidden, focus return, backdrop/Escape/button/nav close)',
     keyboard: 'passed (keyboard open, Escape close, closed drawer not tabbable)',

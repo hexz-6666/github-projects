@@ -1,10 +1,15 @@
 package com.example.fraud.api;
 
 import com.example.fraud.config.RequestIdFilter;
+import com.example.fraud.domain.OpsLogCode;
+import com.example.fraud.domain.OpsLogLevel;
+import com.example.fraud.domain.OpsLogSource;
+import com.example.fraud.service.OpsLogService;
 import java.time.Clock;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import javax.servlet.http.HttpServletRequest;
 import javax.validation.ConstraintViolationException;
 import org.springframework.beans.TypeMismatchException;
@@ -13,6 +18,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.core.Authentication;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
@@ -28,13 +34,19 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 @RestControllerAdvice
 public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     private final Clock clock;
+    private final OpsLogService opsLogService;
 
-    public ApiExceptionHandler(Clock clock) {
+    public ApiExceptionHandler(Clock clock, OpsLogService opsLogService) {
         this.clock = clock;
+        this.opsLogService = opsLogService;
     }
 
     @ExceptionHandler(ApiException.class)
-    public ResponseEntity<ErrorResponse> handleApi(ApiException exception, HttpServletRequest request) {
+    public ResponseEntity<ErrorResponse> handleApi(ApiException exception, HttpServletRequest request,
+                                                    Authentication authentication) {
+        if (exception.getStatus().is5xxServerError()) {
+            recordHttpFailure(request, authentication, exception.getStatus());
+        }
         return response(exception.getStatus(), exception.getCode(), exception.getMessage(),
                 request, exception.getDetails());
     }
@@ -47,9 +59,31 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ErrorResponse> handleUnexpected(Exception exception, HttpServletRequest request) {
+    public ResponseEntity<ErrorResponse> handleUnexpected(Exception exception, HttpServletRequest request,
+                                                          Authentication authentication) {
+        recordHttpFailure(request, authentication, HttpStatus.INTERNAL_SERVER_ERROR);
         return response(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "服务暂时无法处理请求",
                 request, Collections.<ApiException.ErrorDetail>emptyList());
+    }
+
+    private void recordHttpFailure(HttpServletRequest request, Authentication authentication,
+                                   HttpStatus status) {
+        if (request == null || request.getRequestURI().startsWith("/api/v3/ops/")
+                || Boolean.TRUE.equals(request.getAttribute(OpsLogService.TASK_EVENT_ATTRIBUTE))) {
+            return;
+        }
+        String requestId = String.valueOf(request.getAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE));
+        Object start = request.getAttribute(RequestIdFilter.START_NANOS_ATTRIBUTE);
+        Integer durationMs = null;
+        if (start instanceof Number) {
+            long millis = TimeUnit.NANOSECONDS.toMillis(
+                    System.nanoTime() - ((Number) start).longValue());
+            durationMs = millis > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) millis;
+        }
+        opsLogService.record(OpsLogSource.BACKEND,
+                status.is5xxServerError() ? OpsLogLevel.ERROR : OpsLogLevel.WARN,
+                OpsLogCode.HTTP_REQUEST_FAILED, null, null, null, requestId, null,
+                authentication == null ? null : authentication.getName(), null, durationMs);
     }
 
     @Override

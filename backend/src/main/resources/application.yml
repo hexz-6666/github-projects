@@ -34,6 +34,17 @@ spring:
     resources:
       add-mappings: false
 
+app:
+  ops-log:
+    enabled: true
+    retention-days: 30
+    max-events: 50000
+    prune-batch-size: 1000
+    prune-max-batches: 10
+    prune-initial-delay-ms: 60000
+    prune-interval-ms: 60000
+    client-limit-per-minute: 20
+
 logging:
   level:
     root: INFO

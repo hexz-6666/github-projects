@@ -86,6 +86,10 @@ public class SecurityConfig {
                 .antMatchers("/api/v2/imports/**").hasRole("ADMIN")
                 .antMatchers("/api/v2/models/train").hasRole("ADMIN")
                 .antMatchers("/api/v2/audit/**").hasRole("ADMIN")
+                .antMatchers(org.springframework.http.HttpMethod.GET,
+                        "/api/v3/ops/logs", "/api/v3/ops/health").hasRole("ADMIN")
+                .antMatchers(org.springframework.http.HttpMethod.POST,
+                        "/api/v3/ops/client-errors").authenticated()
                 .antMatchers(org.springframework.http.HttpMethod.POST,
                         "/api/v1/alerts/*/reviews").hasAnyRole("REVIEWER", "ADMIN")
                 .antMatchers(org.springframework.http.HttpMethod.GET,

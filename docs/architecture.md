@@ -55,19 +55,29 @@ Vue 不直连 Python/MySQL；Python 不访问 MySQL、不处理复核事务。
 - 演示账号：`demo_analyst`/`demo_reviewer`/`demo_admin`；BCrypt + 内存 `UserDetailsService`，密码可由环境变量覆盖。不是生产 IAM。
 - 会话：`JSESSIONID`，`HttpOnly`、`SameSite=Lax`、本地 `Secure=false`；登录 `changeSessionId()`。
 - CSRF：`CookieCsrfTokenRepository`，`X-XSRF-TOKEN`；登录豁免，其余写操作校验；失败 `403 CSRF_INVALID`。
-- 授权：导入/训练/审计仅 ADMIN；复核 REVIEWER/ADMIN；其余业务端点登录即可；健康匿名。
+- 授权：导入/训练/审计/运行日志查询/日志健康仅 ADMIN；复核 REVIEWER/ADMIN；客户端错误上报仅登录；其余业务端点登录即可；健康匿名。
 - `mysql`：需 `DB_URL`/`DB_USERNAME`/`DB_PASSWORD`；`stub`：数据库 `BYPASS`、聚合 `DEGRADED`，不证明 MySQL 可用。
 - `/api/v1/health`：UP 200，DEGRADED 503；stub 503 是预期。健康不暴露主机、账号、连接串、堆栈。
 - 评分：连接 2s、读取 3s；不可用 502 `MODEL_UNAVAILABLE`，响应违约 502 `MODEL_INVALID_RESPONSE`；参数 400，资源 404，复核冲突 409，媒体类型 415。
 - 导入/训练：缺文件 400 `IMPORT_SOURCE_NOT_FOUND`；模型产物必须存在且位于 `runtime/models`，否则 502。
 - 登录失败统一 401，不区分用户/密码；审计不记录密码、Cookie、请求正文。
 
-## 6. 数据隐私与安全
+## 6. M3 运行诊断日志
+
+- M3 新增结构化 `ops_log_event`，与 `audit_event` 分离：审计是不可变操作历史，运行日志是可清理诊断事件。
+- 来源为 `FRONTEND/BACKEND/MODEL/TASK`；Java 只在统一异常、导入、训练、配置发布、工单和模型调用边界记录固定 code。
+- 客户端只上报 API 失败，服务端把固定 code 映射 level/摘要；route 使用固定模板 key，不接收原始 URL/查询/自由文本。
+- 成功事件在业务事务提交或业务调用返回后记录；失败事件不产生成功记录。导入/训练没有单一事务，只表示服务调用完成。
+- 日志写入使用独立事务并吞掉运行时异常，故障通过 ADMIN-only 进程级 health 显示 `DEGRADED`；不影响业务，不吞 JVM Error。
+- 保留策略为 30 天/50,000 条软上限，由专用保留任务分批清理；不是通用调度平台。
+- 前端仅 ADMIN 右下角浮窗，打开且未暂停时 5 秒轮询；无后台未读轮询、无服务器删除。
+
+## 7. 数据隐私与安全
 
 见 [privacy-and-security.md](privacy-and-security.md)。核心：仅虚构/匿名演示；最少字段；掩码≠加密；确需敏感字段才引入应用层 AES-GCM 与仓库外密钥；日志不记录明文敏感值、密码、Cookie、原始载荷；外部数据按许可隔离，不公开再分发 IEEE-CIS 行级数据。
 
-## 7. 交付验收边界
+## 8. 交付验收边界
 
-已实现：五页、会话认证/RBAC/CSRF、导入幂等与质量、审计、模型注册/时间切分评测、v1 规则评分、stub/MySQL 双实现、自动化测试与浏览器断言。
+已实现：五页、会话认证/RBAC/CSRF、导入幂等与质量、审计、模型注册/时间切分评测、v1 规则评分、stub/MySQL 双实现、M2 工单、M3 结构化运行日志、自动化测试与浏览器断言。
 
-未验收：MySQL V1/V2/V3 实际执行、200 UP、事务/约束/JSON/UTC 真实行为；外部真实 Olist/IEEE 数据导入；真实模型效果；生产部署、TLS、限流、备份恢复、密钥管理、依赖漏洞全扫。以 [verification.md](verification.md) 为准。
+未验收：MySQL V1–V5 实际执行、200 UP、事务/约束/JSON/UTC/日志游标与保留清理真实行为；外部真实 Olist/IEEE 数据导入；真实模型效果；生产部署、TLS、限流（除客户端上报单实例限流外）、备份恢复、密钥管理、依赖漏洞全扫。以 [verification.md](verification.md) 为准。

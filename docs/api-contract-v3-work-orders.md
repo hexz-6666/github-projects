@@ -216,4 +216,4 @@ V4 仅新增 `work_order_config`、`work_order_config_version`、`work_order`、
 - 约束使用 `information_schema` 守卫逐条添加，干净库、已执行库和部分执行库均可重复执行 V4；不依赖 Flyway/Liquibase。
 - **V4 对预期结构的干净库、已执行库和缺少对象的部分执行库可重复执行；同名但定义错误的对象不会被自动修复。** 守卫只按对象名判断，不比对既有索引/外键/CHECK 的列、引用或定义；发布前仍需 schema 预检。
 
-截至本文件更新时：Java/Stub、Vue 构建和浏览器流程已实测；**MySQL 8 的 V1–V4 仍未执行**，因为本机没有可用演示账号，不能声称 MySQL 通过。已提供 `M2MysqlIT`，但只有在同时设置 `DB_URL`、`DB_USERNAME`、`DB_PASSWORD` 时才运行；本次三项均未设置，测试类被跳过，源码中的 8 个测试方法均未实际执行。真实事务回滚、`SELECT ... FOR UPDATE`、唯一键并发、FK/CHECK 和 `DuplicateKeyException` 转换仍未被本次执行证明。
+截至本文件更新时：Java/Stub、Vue 构建和浏览器流程已实测；**MySQL 8 的 V1–V5 仍未执行**，因为本机没有可用演示账号，不能声称 MySQL 通过。已提供 `M2MysqlIT`，但只有在同时设置 `DB_URL`、`DB_USERNAME`、`DB_PASSWORD` 时才运行；本次三项均未设置，测试类被跳过，源码中的 8 个测试方法均未实际执行。真实事务回滚、`SELECT ... FOR UPDATE`、唯一键并发、FK/CHECK、日志保留和 `DuplicateKeyException` 转换仍未被本次执行证明。

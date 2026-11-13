@@ -27,6 +27,7 @@ import HealthPage from './pages/HealthPage.vue'
 import WorkOrderQueuePage from './pages/WorkOrderQueuePage.vue'
 import WorkOrderDetailPage from './pages/WorkOrderDetailPage.vue'
 import WorkOrderConfigsPage from './pages/WorkOrderConfigsPage.vue'
+import OpsLogWindow from './components/OpsLogWindow.vue'
 
 const user = ref(null)
 const loading = ref(true)
@@ -107,6 +108,8 @@ const currentItem = computed(() => {
   }
   return { label: '订单概览', group: '风险业务' }
 })
+
+const isAdmin = computed(() => (user.value?.roles || []).includes('ADMIN'))
 
 const roleText = computed(() => {
   if (!user.value?.roles?.length) {
@@ -337,5 +340,6 @@ onBeforeUnmount(() => {
         />
       </main>
     </div>
+    <OpsLogWindow v-if="isAdmin" :user="user" />
   </div>
 </template>

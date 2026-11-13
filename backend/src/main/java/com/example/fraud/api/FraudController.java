@@ -2,6 +2,8 @@ package com.example.fraud.api;
 
 import com.example.fraud.domain.AlertRecord;
 import com.example.fraud.domain.AlertStatus;
+import com.example.fraud.domain.OpsLogCode;
+import com.example.fraud.domain.OpsLogSource;
 import com.example.fraud.domain.OrderRecord;
 import com.example.fraud.domain.OrderStatus;
 import com.example.fraud.domain.ReviewResult;
@@ -10,6 +12,7 @@ import com.example.fraud.domain.RiskLevel;
 import com.example.fraud.service.AuditService;
 import com.example.fraud.service.HealthService;
 import com.example.fraud.service.ModelClient;
+import com.example.fraud.service.OpsLogService;
 import com.example.fraud.service.ScoreService;
 import com.example.fraud.store.FraudStore;
 import java.net.URI;
@@ -39,15 +42,17 @@ public class FraudController {
     private final ScoreService scoreService;
     private final HealthService healthService;
     private final AuditService auditService;
+    private final OpsLogService opsLogService;
 
     public FraudController(FraudStore store, ModelClient modelClient,
                            ScoreService scoreService, HealthService healthService,
-                           AuditService auditService) {
+                           AuditService auditService, OpsLogService opsLogService) {
         this.store = store;
         this.modelClient = modelClient;
         this.scoreService = scoreService;
         this.healthService = healthService;
         this.auditService = auditService;
+        this.opsLogService = opsLogService;
     }
 
     @GetMapping("/health")
@@ -146,7 +151,18 @@ public class FraudController {
         if (!orderId.matches("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")) {
             throw ApiException.invalid("orderId 格式不符合接口约束");
         }
-        ScoreRecord saved = scoreService.score(orderId);
+        record(OpsLogCode.MODEL_SCORE_STARTED, orderId, authentication, servletRequest);
+        ScoreRecord saved;
+        try {
+            saved = scoreService.score(orderId);
+        } catch (RuntimeException exception) {
+            servletRequest.setAttribute(OpsLogService.TASK_EVENT_ATTRIBUTE, Boolean.TRUE);
+            record(OpsLogCode.MODEL_SCORE_FAILED, orderId, authentication, servletRequest);
+            throw exception;
+        }
+        // The score write has returned; a later audit/response failure must not
+        // turn the completed score into a MODEL_SCORE_FAILED event.
+        record(OpsLogCode.MODEL_SCORE_COMPLETED, orderId, authentication, servletRequest);
         Map<String, Object> detail = new LinkedHashMap<String, Object>();
         detail.put("scoreId", saved.getScoreId());
         detail.put("modelVersion", saved.getModelVersion());
@@ -154,5 +170,12 @@ public class FraudController {
         auditService.record(authentication, "SCORE_RUN", "ORDER", orderId, "SUCCESS",
                 servletRequest, detail);
         return saved;
+    }
+
+    private void record(OpsLogCode code, String taskId, Authentication authentication,
+                        HttpServletRequest request) {
+        opsLogService.record(OpsLogSource.MODEL, code.getLevel(), code, null, "MODEL_SCORE",
+                taskId, opsLogService.requestId(request), null,
+                authentication == null ? null : authentication.getName(), null, null);
     }
 }

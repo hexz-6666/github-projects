@@ -1,6 +1,6 @@
 # 电商订单轻量数仓 · 欺诈交易异常检测演示
 
-本科毕设规模的 **Vue 3 + Spring Boot + FastAPI + MySQL 8.0** 最小项目。v2 在 v1 契约上增量实现：订单概览、异常队列、详情与人工复核、数据质量、模型评估五个页面；会话登录、角色权限、CSRF、审计；Olist/IEEE-CIS 分源导入、幂等批次与数据质量；IEEE-CIS 独立训练/评测。**不是完整业务系统，不是大规模分布式数仓，不包含论文。**
+本科毕设规模的 **Vue 3 + Spring Boot + FastAPI + MySQL 8.0** 最小项目。v2 在 v1 契约上增量实现：订单概览、异常队列、详情与人工复核、数据质量、模型评估五个页面；会话登录、角色权限、CSRF、审计；Olist/IEEE-CIS 分源导入、幂等批次与数据质量；IEEE-CIS 独立训练/评测。M2 增加风险告警工单与配置生命周期；M3 增加 ADMIN 结构化运行日志查询和前端浮窗。**不是完整业务系统，不是大规模分布式数仓，不包含论文。**
 
 > 全部运行数据为虚构或按来源隔离的本地演示数据。规则分不是真实欺诈概率，告警不是欺诈事实，复核结论不是客观真值，页面掩码不是加密。Olist 没有直接欺诈标签；IEEE-CIS 的 `isFraud` 只在其自身交易域有效；两者不得拼接或互相补标。
 
@@ -12,12 +12,13 @@ beysesji/
 │   ├── src/App.vue                # 登录、导航、哈希路由与权限态
 │   ├── src/api.js                 # 相对路径 API、CSRF、错误处理
 │   ├── src/pages/                 # 登录/订单/告警/详情复核/质量/模型/健康
+│   ├── src/components/            # M3 运行日志浮窗
 │   ├── src/style.css
 │   └── vite.config.js             # 127.0.0.1:5173，/api 代理到 8080
 ├── backend/                       # Spring Boot 对外 API、事务、审计、导入协调
 │   ├── src/main/java/com/example/fraud/
 │   ├── src/main/resources/application.yml
-│   ├── src/test/java/             # 58 项 MockMvc/服务/模型客户端测试
+│   ├── src/test/java/             # 74 项 MockMvc/服务/模型客户端测试
 │   └── pom.xml
 ├── model-service/                 # FastAPI v1 规则评分 + v2 IEEE 训练/评测
 │   ├── app/{main,schemas,scoring,training}.py
@@ -26,6 +27,8 @@ beysesji/
 ├── database/
 │   ├── migrations/V1__init.sql
 │   ├── migrations/V3__v2_sources_eval.sql
+│   ├── migrations/V4__v3_work_orders.sql
+│   ├── migrations/V5__v3_ops_events.sql
 │   ├── seed/V2__synthetic_demo.sql
 │   ├── verify_synthetic.sql
 │   └── README.md
@@ -33,6 +36,7 @@ beysesji/
 │   ├── architecture.md            # 架构、边界、v2 数据流
 │   ├── api-contract.md            # 冻结的 v1 契约
 │   ├── api-contract-v2.md         # 认证/导入/质量/审计/模型增量契约
+│   ├── api-contract-v3-ops-logs.md # M3 运行日志与客户端错误契约
 │   ├── data-dictionary.md         # ODS/DWD/DWS/ADS 与 v2 表
 │   ├── data-sources.md            # 来源、许可、核验日期、限制
 │   ├── privacy-and-security.md    # 虚构数据、掩码、密钥、日志
@@ -53,7 +57,7 @@ beysesji/
 ## 2. 调用关系与边界
 
 ```text
-Vue 3 → Spring Boot → MySQL（订单/特征/评分/告警/复核/导入/审计/模型）
+Vue 3 → Spring Boot → MySQL（订单/特征/评分/告警/复核/导入/审计/模型/M3 运行日志）
                   └──→ FastAPI（v1 规则健康/评分；v2 IEEE 训练/评测）
 ```
 
@@ -151,9 +155,12 @@ database/migrations/V1__init.sql      # 建库、6 张 v1 表
 database/seed/V2__synthetic_demo.sql  # 3 笔虚构订单/评分/告警；非幂等，只执行一次
 database/migrations/V3__v2_sources_eval.sql  # 放开单源限制，新增导入/DQ/审计/模型/评测表
 database/migrations/V4__v3_work_orders.sql   # M2 工单/配置/版本/事件与组合约束
+database/migrations/V5__v3_ops_events.sql    # M3 运行诊断日志；独立于 audit_event
 ```
 
-然后用 `database/verify_synthetic.sql` 核对基础行数。V3 必须在 V1 之后，V4 必须在 V1–V3 之后；V2 种子在 V3 前后均可，但推荐按上表顺序。不要重复执行种子。V4 的约束/索引使用 `information_schema` 守卫：**V4 对预期结构的干净库、已执行库和缺少对象的部分执行库可重复执行；同名但定义错误的对象不会被自动修复。** 不要用 `DROP TABLE` 或回滚迁移修复。详见 [database/README.md](database/README.md)。
+然后用 `database/verify_synthetic.sql` 核对基础行数。V3 必须在 V1 之后，V4 必须在 V1–V3 之后，V5 必须在 V4 之后；V2 种子在 V3 前后均可，但推荐按上表顺序。不要重复执行种子。V4 的约束/索引使用 `information_schema` 守卫：**V4 对预期结构的干净库、已执行库和缺少对象的部分执行库可重复执行；同名但定义错误的对象不会被自动修复。** 不要用 `DROP TABLE` 或回滚迁移修复。详见 [database/README.md](database/README.md)。
+
+M3 必须先应用 V5 再启用日志写入；V5 不存在或 `ops_log_event` 不可用时，业务继续运行，`GET /api/v3/ops/health` 返回 `DEGRADED`，前端显示日志降级而不伪造日志。日志保留由专用任务按 30 天/50,000 条软上限清理。
 
 MySQL 管理账号只做 DDL；应用另建最小权限账号，仅授予 `fraud_demo.*` 的 SELECT/INSERT/UPDATE/DELETE：
 
@@ -176,7 +183,7 @@ try {
 }
 ```
 
-MySQL 与模型均正常时健康才返回 200 `UP`。本机当前**没有**可用演示账号，因此 V1–V4、真实 CRUD、事务、并发幂等和 200 UP **未被声称验证**。
+MySQL 与模型均正常时健康才返回 200 `UP`。本机当前**没有**可用演示账号，因此 V1–V5、真实 CRUD、事务、并发幂等、运行日志清理和 200 UP **未被声称验证**。
 
 ## 6. API 与最小调用示例
 
@@ -200,6 +207,11 @@ MySQL 与模型均正常时健康才返回 200 `UP`。本机当前**没有**可�
 | POST | `/api/v2/models/train` | IEEE 训练/评测 | ADMIN |
 | GET | `/api/v2/evaluations` | 评测指标 | 登录 |
 | GET | `/api/v2/ieee/summary` | 独立评测域统计 | 登录 |
+| GET | `/api/v3/ops/logs?minLevel=WARN&limit=50` | 结构化运行日志，游标分页 | ADMIN |
+| GET | `/api/v3/ops/health` | 日志存储进程级健康/降级信号 | ADMIN |
+| POST | `/api/v3/ops/client-errors` | 固定字段客户端 API 失败上报，单实例限流 | 登录 + CSRF |
+
+M3 运行日志入口仅 ADMIN 可见，位于右下角；打开且未暂停时每 5 秒轮询，默认 WARN，可查看 INFO 及以上，支持暂停、加载更早、清屏当前视图和移动端。日志只按文本渲染，不读取任意服务器文件，不提供服务器日志删除。
 
 PowerShell 登录 + CSRF 示例（不要把密码写入脚本或历史）：
 
@@ -224,7 +236,7 @@ Invoke-RestMethod "$base/api/v1/alerts/1/reviews" -Method Post -WebSession $sess
 .\scripts\verify.ps1
 ```
 
-运行前停止 `dev.ps1` 启动的后端，避免 Maven 与运行进程共享 `backend/target/classes`。脚本执行 Python 40 项、Java 58 项、Vue 生产构建；不把 MySQL DDL/凭据验证自动算通过。
+运行前停止 `dev.ps1` 启动的后端，避免 Maven 与运行进程共享 `backend/target/classes`。脚本执行 Python 40 项、Java 74 项、Vue 生产构建；不把 MySQL DDL/凭据验证自动算通过。
 
 浏览器验收（可选，不进入生产依赖）：
 
@@ -234,7 +246,7 @@ $env:PLAYWRIGHT_MODULE = "$PWD\runtime\browser-tools\node_modules\playwright-cor
 node scripts\browser-check.mjs
 ```
 
-当前实测（2026-11-12）：Python 40 passed、Java 全量（不含门控 `M2MysqlIT`）58 passed（0 failures/errors/skipped）、Vue build 通过、浏览器登录/五页/复核/M2 工单/取消确认/窄桌面与移动端无溢出。`M2MysqlIT` 单独运行时因未设置三个数据库环境变量而跳过 1 项；MySQL V1–V4 及真实事务仍未执行、未验证。详见 [verification.md](docs/verification.md)。
+当前实测（2026-11-13 10:02）：Python 40 passed、Java 全量（不含门控 MySQL IT）**74 passed**（0 failures/errors/skipped）、Vue build 通过；浏览器记录仍为此前 M3 完成阶段的结果，本轮文档收尾未重跑。`M2MysqlIT`、`M3OpsLogMysqlIT` 单独运行时因未设置三个数据库环境变量而跳过；其中 `M3OpsLogMysqlIT` 源码有 5 个测试方法，本次类级跳过、5 个方法均未执行、MySQL canary 未实测。MySQL V1–V5、运行日志清理及真实事务仍未执行、未验证。此前 M3 阶段为 70 项，**70 是历史结果，不是当前实测**。详见 [verification.md](docs/verification.md)。
 
 ## 8. 来源许可与安全
 
@@ -265,4 +277,4 @@ node scripts\browser-check.mjs
 
 ### 9.3 当前基线
 
-Python **40** 项、Java **58** 项测试通过；Vue 构建通过；浏览器登录/五页/复核/移动端断言通过。Java 的 **33** 项是历史 v2 基线（ApiContract 14 + ModelClient 11 + V2 8），不是当前实测。MySQL 的 V1–V4、真实 200 UP、`FOR UPDATE`、FK/CHECK、事务失败回滚及唯一键并发 **未验证**；外部真实 Olist/IEEE 数据未导入，端到端只用合成烟测文件。[acceptance-checklist.md](docs/acceptance-checklist.md) 是历史 v2 验收快照（仍写 33 项），不作为当前 M2 验收口径；当前结果见 [verification.md](docs/verification.md)。
+Python **40** 项、Java **74** 项测试通过；Vue 构建通过；浏览器记录为此前 M3 完成阶段的结果，本轮文档收尾未重跑。Java 的 **33** 项是历史 v2 基线（ApiContract 14 + ModelClient 11 + V2 8），Java 的 **70** 项是此前 M3 阶段历史结果，均不是当前实测。MySQL 的 V1–V5、真实 200 UP、`FOR UPDATE`、FK/CHECK、事务失败回滚、运行日志清理及唯一键并发 **未验证**；外部真实 Olist/IEEE 数据未导入，端到端只用合成烟测文件。[acceptance-checklist.md](docs/acceptance-checklist.md) 是历史 v2 验收快照（仍写 33 项），不作为当前 M3 验收口径；当前结果见 [verification.md](docs/verification.md)。

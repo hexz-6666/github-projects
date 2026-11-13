@@ -1,8 +1,8 @@
-# M2 交接说明（最新）
+# M3 交接说明（最新）
 
-更新时间：2026-11-12（Asia/Shanghai）
-状态：**M2 最终整改已完成 Stub/浏览器验证；MySQL 未验证；M3 尚未开始。**
-M1 基线提交 `77c35d4`、M2 原提交 `e72bd3a`、M2 corrective patch `9d0f236` 保持未修改、未 amend。本次补充补丁的改动仍在**未提交工作树**中；未获单独授权前不执行 Git commit。
+更新时间：2026-11-13（Asia/Shanghai）
+状态：**M3 结构化运行日志/ADMIN 查询/前端浮窗已完成 Stub/此前浏览器验证；MySQL 未验证；本轮文档收尾未提交 Git。**
+M1 基线提交 `77c35d4`、M2 原提交 `e72bd3a`、M2 corrective patch `9d0f236` 保持未修改、未 amend。M2 最终整改已提交为 `b6e260c`。当前 M3 未提交：19 个 tracked modified、20 个 untracked、0 staged；最终统计见第 8 节。本轮文档收尾未重跑浏览器。
 
 ## 1. 本阶段实际范围
 
@@ -16,7 +16,7 @@ M2 只实现：
 - `UNIQUE(alert_id)` 幂等与不同配置冲突；
 - 告警 ↔ 工单双向追踪。
 
-明确未做：M3/M4/M5、日志中心/前端日志窗口/任务日志、看板、图表、ECharts、BPMN、MQ、分布式调度、异步任务平台。未修改 Python、V1/V2 Controller 或响应、认证/CSRF、模型协议、数据源/标签语义、`.env`、`runtime`、`data`、`node_modules`、`dist`、`target`、真实凭据、V1/V2/V3 迁移。本次补充补丁没有修改前端、V4 SQL 或数据库迁移；`V3WorkOrderController.create()` 只把响应渲染切换到 `createDetail()`，普通详情仍走 `detail(id)`。
+M2 阶段明确未做：M3/M4/M5、日志中心/前端日志窗口/任务日志、看板、图表、ECharts、BPMN、MQ、分布式调度、异步任务平台；M3 已在第 8 节实现。未修改 Python、V1/V2 Controller 或响应、认证/CSRF、模型协议、数据源/标签语义、`.env`、`runtime`、`data`、`node_modules`、`dist`、`target`、真实凭据、V1/V2/V3 迁移。本次补充补丁没有修改前端、V4 SQL 或数据库迁移；`V3WorkOrderController.create()` 只把响应渲染切换到 `createDetail()`，普通详情仍走 `detail(id)`。
 
 ## 2. 数据库
 
@@ -114,10 +114,34 @@ Stub 并发测试使用同一 JVM 临界区，证明可观察语义，不证明 
 
 `scripts/dev.ps1` 曾启动 8000/8080/5173 进行浏览器验证；本次只停止该脚本启动的进程，未终止用户自己的进程。`runtime/` 下生成浏览器截图和测试日志，已被忽略，不作为交付物。
 
-## 8. 文档口径
+## 8. M3 结构化运行日志
 
-`docs/acceptance-checklist.md` 仍是历史 v2 验收快照（Java 33、无 M2/V4 章节），本次未改写；它不能作为当前 M2 验收结果。当前口径以 [verification.md](verification.md) 和本文件为准。
+已实现：
 
-## 9. 下一阶段
+- V5 additive `ops_log_event`，独立于 `audit_event`；不修改 V1–V4。
+- `OpsLogStore` 的 Stub/MySQL 双实现；Stub 30 天/50,000 条有界。
+- `GET /api/v3/ops/logs` 仅 ADMIN；默认 `minLevel=WARN`，ADMIN 可查 INFO，DEBUG 不产生也不可查询；游标、时间范围、source/task/requestId/relatedRequestId 过滤。
+- `GET /api/v3/ops/health` 仅 ADMIN；进程启动后未成功探测前为 DEGRADED，状态为进程级，重启后计数清零。
+- `POST /api/v3/ops/client-errors` 已登录 + CSRF；每用户/会话 20 次/分钟单实例内存限流；只收固定 `code`、`route`、`relatedRequestId`、`buildVersion`，level/摘要由服务端映射，不接受自由文本/actor/URL/堆栈/详情。
+- `requestId` 是上报请求自身的服务端 ID；`relatedRequestId` 是客户端提供的失败请求关联值，只校验 UUID 格式，查询精确匹配。
+- 日志写入 `REQUIRES_NEW`，失败只进入 DEGRADED 和限频固定 code 兜底告警，不影响业务；不吞 JVM Error。
+- 专用 `OpsLogRetentionJob` 只做 30 天/50,000 条保留清理，每批 1,000、每次最多 10 批，不在业务请求路径做全表计数。
+- 前端仅 ADMIN 右下角浮窗；打开且未暂停时每 5 秒轮询；支持 minLevel/source/taskType/relatedRequestId、暂停、加载更早、清屏、空态/断线/403/重试/移动端；文本渲染，无服务器删除。
+- 业务成功事件在事务提交/业务调用正常返回后记录；失败不产生成功事件；业务已提交但 HTTP 响应失败时允许同时记录业务成功与 `HTTP_REQUEST_FAILED`，语义不同。
 
-**M3 尚未开始。** 本阶段到此停止，不自动进入 M3，也不扩展日志中心、看板、图表、BPMN 或异步平台。
+实际结果：
+
+- Java 常规全量：**74 tests，74 passed，0 failures/errors/skipped**；**2026-11-13 10:02**，M3 API 6 + M3 Service 8 + M3 Resilience 2。此前 M3 阶段的 **70 项仅为历史结果**，不是当前实测。
+- `M3OpsLogMysqlIT` 源码现有 **5 个 `@Test` 方法**；本次三个 DB 变量未设置，类级跳过（**1 skipped**），5 个方法均未执行，**MySQL canary 未实测**。不写 MySQL 通过。
+- Python 40 passed；Vue 构建通过（2064 modules）；浏览器记录为此前 M3 完成阶段，本轮文档收尾未重跑。
+- 配置事件抖动：同方法无 sleep 连续运行 **10 次，10/10 通过**，此次未复现；**根因仍未定位**，不能声称已修复。
+- M3 统计（最终）：HEAD `b6e260c`；19 个 tracked modified、20 个 untracked、0 staged；tracked **+771/−69**，untracked **20 files / 2,573 lines**，合计 **+3,344/−69**；未提交。
+- 详见 [verification.md](verification.md) 与 [api-contract-v3-ops-logs.md](api-contract-v3-ops-logs.md)。
+
+## 9. 文档口径
+
+`docs/acceptance-checklist.md` 仍是历史 v2 验收快照（Java 33、无 M2/M3/V4/V5 章节），本次未改写；它不能作为当前 M3 验收结果。当前口径以 [verification.md](verification.md) 和本文件为准。
+
+## 10. 下一阶段
+
+**M3 已完成但未提交；M4/M5 尚未开始。** 没有扩展看板、图表、ECharts、实时推送、通用调度平台或 Python 改动。

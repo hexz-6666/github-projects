@@ -1,7 +1,10 @@
 package com.example.fraud.api;
 
+import com.example.fraud.domain.OpsLogCode;
+import com.example.fraud.domain.OpsLogSource;
 import com.example.fraud.domain.WorkOrderScope;
 import com.example.fraud.domain.WorkOrderStatus;
+import com.example.fraud.service.OpsLogService;
 import com.example.fraud.service.WorkOrderService;
 import java.net.URI;
 import java.util.List;
@@ -23,9 +26,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v3")
 public class V3WorkOrderController {
     private final WorkOrderService service;
+    private final OpsLogService opsLogService;
 
-    public V3WorkOrderController(WorkOrderService service) {
+    public V3WorkOrderController(WorkOrderService service, OpsLogService opsLogService) {
         this.service = service;
+        this.opsLogService = opsLogService;
     }
 
     @GetMapping("/work-orders")
@@ -65,14 +70,25 @@ public class V3WorkOrderController {
                                                        @Valid @RequestBody WorkOrderCreateRequest request,
                                                        Authentication authentication,
                                                        HttpServletRequest servletRequest) {
-        WorkOrderService.CreateResult result = service.create(alertId, request.getConfigId(),
-                authentication, servletRequest);
-        long id = result.getRecord().getId();
-        Map<String, Object> body = service.createDetail(id, authentication);
-        body.put("idempotent", result.isIdempotent());
-        return ResponseEntity.status(result.isIdempotent() ? HttpStatus.OK : HttpStatus.CREATED)
-                .location(URI.create("/api/v3/work-orders/" + id))
-                .body(body);
+        record(OpsLogCode.WORK_ORDER_CREATE_STARTED, String.valueOf(alertId), authentication,
+                servletRequest);
+        try {
+            WorkOrderService.CreateResult result = service.create(alertId, request.getConfigId(),
+                    authentication, servletRequest);
+            long id = result.getRecord().getId();
+            Map<String, Object> body = service.createDetail(id, authentication);
+            body.put("idempotent", result.isIdempotent());
+            record(result.isIdempotent() ? OpsLogCode.WORK_ORDER_CREATE_IDEMPOTENT
+                            : OpsLogCode.WORK_ORDER_CREATED,
+                    String.valueOf(id), authentication, servletRequest);
+            return ResponseEntity.status(result.isIdempotent() ? HttpStatus.OK : HttpStatus.CREATED)
+                    .location(URI.create("/api/v3/work-orders/" + id))
+                    .body(body);
+        } catch (ApiException exception) {
+            fail(OpsLogCode.WORK_ORDER_CREATE_REJECTED, String.valueOf(alertId), authentication,
+                    servletRequest);
+            throw exception;
+        }
     }
 
     @PostMapping(value = "/work-orders/{id}/assign", consumes = "application/json")
@@ -80,8 +96,18 @@ public class V3WorkOrderController {
                                       @Valid @RequestBody WorkOrderAssignRequest request,
                                       Authentication authentication,
                                       HttpServletRequest servletRequest) {
-        return service.assign(id, request.getAssigneeId(), request.getExpectedVersion(),
-                authentication, servletRequest);
+        record(OpsLogCode.WORK_ORDER_ASSIGN_STARTED, String.valueOf(id), authentication, servletRequest);
+        try {
+            Map<String, Object> result = service.assign(id, request.getAssigneeId(),
+                    request.getExpectedVersion(), authentication, servletRequest);
+            record(OpsLogCode.WORK_ORDER_ASSIGN_COMPLETED, String.valueOf(id), authentication,
+                    servletRequest);
+            return result;
+        } catch (ApiException exception) {
+            fail(OpsLogCode.WORK_ORDER_ASSIGN_REJECTED, String.valueOf(id), authentication,
+                    servletRequest);
+            throw exception;
+        }
     }
 
     @PostMapping(value = "/work-orders/{id}/transitions", consumes = "application/json")
@@ -89,8 +115,20 @@ public class V3WorkOrderController {
                                           @Valid @RequestBody WorkOrderTransitionRequest request,
                                           Authentication authentication,
                                           HttpServletRequest servletRequest) {
-        return service.transition(id, request.getTransition(), request.getExpectedVersion(),
-                request.getNote(), request.getResolutionReviewId(), authentication, servletRequest);
+        record(OpsLogCode.WORK_ORDER_TRANSITION_STARTED, String.valueOf(id), authentication,
+                servletRequest);
+        try {
+            Map<String, Object> result = service.transition(id, request.getTransition(),
+                    request.getExpectedVersion(), request.getNote(),
+                    request.getResolutionReviewId(), authentication, servletRequest);
+            record(OpsLogCode.WORK_ORDER_TRANSITION_COMPLETED, String.valueOf(id), authentication,
+                    servletRequest);
+            return result;
+        } catch (ApiException exception) {
+            fail(OpsLogCode.WORK_ORDER_TRANSITION_REJECTED, String.valueOf(id), authentication,
+                    servletRequest);
+            throw exception;
+        }
     }
 
     @PostMapping(value = "/work-orders/{id}/notes", consumes = "application/json")
@@ -98,8 +136,31 @@ public class V3WorkOrderController {
                                     @Valid @RequestBody WorkOrderNoteRequest request,
                                     Authentication authentication,
                                     HttpServletRequest servletRequest) {
-        return service.addNote(id, request.getNote(), request.getExpectedVersion(),
-                authentication, servletRequest);
+        record(OpsLogCode.WORK_ORDER_NOTE_STARTED, String.valueOf(id), authentication, servletRequest);
+        try {
+            Map<String, Object> result = service.addNote(id, request.getNote(),
+                    request.getExpectedVersion(), authentication, servletRequest);
+            record(OpsLogCode.WORK_ORDER_NOTE_COMPLETED, String.valueOf(id), authentication,
+                    servletRequest);
+            return result;
+        } catch (ApiException exception) {
+            fail(OpsLogCode.WORK_ORDER_NOTE_REJECTED, String.valueOf(id), authentication,
+                    servletRequest);
+            throw exception;
+        }
+    }
+
+    private void record(OpsLogCode code, String taskId, Authentication authentication,
+                        HttpServletRequest request) {
+        opsLogService.record(OpsLogSource.TASK, code.getLevel(), code, null, "WORK_ORDER",
+                taskId, opsLogService.requestId(request), null,
+                authentication == null ? null : authentication.getName(), null, null);
+    }
+
+    private void fail(OpsLogCode code, String taskId, Authentication authentication,
+                      HttpServletRequest request) {
+        request.setAttribute(OpsLogService.TASK_EVENT_ATTRIBUTE, Boolean.TRUE);
+        record(code, taskId, authentication, request);
     }
 
     private WorkOrderScope scope(String value) {

@@ -9,8 +9,9 @@
 3. 在空白库执行一次 `seed/V2__synthetic_demo.sql`。它是种子脚本，不是迁移脚本，**不幂等**，重复执行会发生主键/唯一键冲突。
 4. 执行 `migrations/V3__v2_sources_eval.sql`：放开 v1 的单源/单币种限制，新增 `etl_import_batch`、`dq_check_result`、`audit_event`、`model_registry`、`model_evaluation`、`eval_ieee_transaction`。
 5. 执行 `migrations/V4__v3_work_orders.sql`：新增工单配置、不可变配置版本、工单、工单事件表，以及复核/配置版本组合约束。V4 必须在 V1–V3 之后。
-6. 执行 `verify_synthetic.sql`：预期 3 个 ODS、3 个 DWD、3 个 DWS、1 个评分、1 个告警、0 个复核（v2 新表初始为空）。
-7. 另建应用账号，只授予 `fraud_demo` 的 SELECT/INSERT/UPDATE/DELETE；DDL 由管理账号执行，应用不使用 root。
+6. 执行 `migrations/V5__v3_ops_events.sql`：新增 `ops_log_event` 运行诊断日志表，独立于 `audit_event`。V5 必须在 V4 之后，先应用 V5 再启用 M3 日志写入。
+7. 执行 `verify_synthetic.sql`：预期 3 个 ODS、3 个 DWD、3 个 DWS、1 个评分、1 个告警、0 个复核（v2/M2/M3 新表初始为空）。
+8. 另建应用账号，只授予 `fraud_demo` 的 SELECT/INSERT/UPDATE/DELETE；DDL 由管理账号执行，应用不使用 root。
 
 ### V4 可重复执行与部分执行
 
@@ -41,10 +42,20 @@ mysql -u root -p --execute="source E:/beysesji/database/migrations/V1__init.sql"
 mysql -u root -p --execute="source E:/beysesji/database/seed/V2__synthetic_demo.sql"
 mysql -u root -p --execute="source E:/beysesji/database/migrations/V3__v2_sources_eval.sql"
 mysql -u root -p --execute="source E:/beysesji/database/migrations/V4__v3_work_orders.sql"
+mysql -u root -p --execute="source E:/beysesji/database/migrations/V5__v3_ops_events.sql"
 mysql -u root -p --execute="source E:/beysesji/database/verify_synthetic.sql"
 ```
 
 PowerShell 不支持 `< file` 输入重定向，以上使用 `mysql.exe` 的 `source`。项目不在 `E:/beysesji` 时替换绝对路径。用户名只是示例，不要把密码复制到命令行、历史或 `.env.example`。
+
+## V5 运行日志与保留
+
+- V5 只新增 `ops_log_event`，不改 V1–V4，不改 `audit_event`；先应用 V5，再启用 M3 日志写入。
+- `GET /api/v3/ops/logs` 仅 ADMIN；`GET /api/v3/ops/health` 仅 ADMIN；客户端上报 `POST /api/v3/ops/client-errors` 为已登录 + CSRF。
+- `ops_log_event` 全表 30 天/50,000 条软上限由专用 `OpsLogRetentionJob` 分批清理；每批 1,000 条、每次最多 10 批；清理期间允许暂时超过 50,000 条。
+- 日志写入失败不影响业务，健康状态为 `DEGRADED`；不会自动建表或修复 schema。
+- Stub 使用同一 30 天/50,000 条有界内存裁剪。
+- 门控测试：`mvn -f backend/pom.xml -q "-Dtest=M3OpsLogMysqlIT" test`（在 `backend` 下可直接 `mvn ...`）；三个变量缺一即跳过。
 
 ## v2 数据边界
 
@@ -56,4 +67,4 @@ PowerShell 不支持 `< file` 输入重定向，以上使用 `mysql.exe` 的 `so
 
 ## 未验证范围
 
-本机 MySQL80 服务和 3306 端口已发现，但没有可用的独立演示账号，未猜测密码。**未实际执行** V1–V4、约束、索引、JSON、UTC、导入、事务失败回滚、评分写入或健康 `UP`；`M2MysqlIT` 的 8 个测试方法均未实际运行，不据此宣称 MySQL 模式通过。获得凭据后按根目录 README §5 使用 `scripts/dev.ps1 -WithMySql` 验证，并更新 [verification.md](../docs/verification.md)。
+本机 MySQL80 服务和 3306 端口已发现，但没有可用的独立演示账号，未猜测密码。**未实际执行** V1–V5、约束、索引、JSON、UTC、导入、事务失败回滚、运行日志游标/清理、评分写入或健康 `UP`；`M2MysqlIT` 的 8 个和 `M3OpsLogMysqlIT` 的 5 个测试方法均未实际运行；M3 为类级跳过，5 个方法均未执行，**MySQL canary 未实测**，不据此宣称 MySQL 模式通过。获得凭据后按根目录 README §5 使用 `scripts/dev.ps1 -WithMySql` 验证，并更新 [verification.md](../docs/verification.md)。

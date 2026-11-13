@@ -1,7 +1,10 @@
 package com.example.fraud.api;
 
+import com.example.fraud.domain.OpsLogCode;
+import com.example.fraud.domain.OpsLogSource;
 import com.example.fraud.service.ImportService;
 import com.example.fraud.service.ModelAdminService;
+import com.example.fraud.service.OpsLogService;
 import com.example.fraud.store.V2Store;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -24,18 +27,37 @@ public class V2Controller {
     private final V2Store store;
     private final ImportService importService;
     private final ModelAdminService modelAdminService;
+    private final OpsLogService opsLogService;
 
-    public V2Controller(V2Store store, ImportService importService, ModelAdminService modelAdminService) {
+    public V2Controller(V2Store store, ImportService importService, ModelAdminService modelAdminService,
+                        OpsLogService opsLogService) {
         this.store = store;
         this.importService = importService;
         this.modelAdminService = modelAdminService;
+        this.opsLogService = opsLogService;
     }
 
     @PostMapping(value = "/imports", consumes = "application/json")
     public Map<String, Object> importData(@Valid @RequestBody ImportRequest request,
                                           Authentication authentication,
                                           HttpServletRequest servletRequest) {
-        return importService.run(request.getSourceSystem(), authentication, servletRequest);
+        String source = request.getSourceSystem() == null ? ""
+                : request.getSourceSystem().trim().toUpperCase();
+        String taskType = "IEEE_CIS".equals(source) ? "IMPORT_IEEE_CIS" : "IMPORT_OLIST";
+        record(OpsLogCode.IMPORT_STARTED, taskType, null, authentication, servletRequest);
+        try {
+            Map<String, Object> result = importService.run(request.getSourceSystem(), authentication,
+                    servletRequest);
+            OpsLogCode completion = "FAILED".equals(result.get("status"))
+                    ? OpsLogCode.IMPORT_FAILED : OpsLogCode.IMPORT_COMPLETED;
+            record(completion, taskType, String.valueOf(result.get("batchId")), authentication,
+                    servletRequest);
+            return result;
+        } catch (RuntimeException exception) {
+            markTaskFailure(servletRequest);
+            record(OpsLogCode.IMPORT_FAILED, taskType, null, authentication, servletRequest);
+            throw exception;
+        }
     }
 
     @GetMapping("/imports")
@@ -99,7 +121,20 @@ public class V2Controller {
     public Map<String, Object> train(@Valid @RequestBody TrainRequest request,
                                      Authentication authentication,
                                      HttpServletRequest servletRequest) {
-        return modelAdminService.train(request.getModelVersion(), authentication, servletRequest);
+        record(OpsLogSource.MODEL, OpsLogCode.MODEL_TRAIN_STARTED, "MODEL_TRAIN",
+                request.getModelVersion(), authentication, servletRequest);
+        try {
+            Map<String, Object> result = modelAdminService.train(request.getModelVersion(),
+                    authentication, servletRequest);
+            record(OpsLogSource.MODEL, OpsLogCode.MODEL_TRAIN_COMPLETED, "MODEL_TRAIN",
+                    request.getModelVersion(), authentication, servletRequest);
+            return result;
+        } catch (RuntimeException exception) {
+            markTaskFailure(servletRequest);
+            record(OpsLogSource.MODEL, OpsLogCode.MODEL_TRAIN_FAILED, "MODEL_TRAIN",
+                    request.getModelVersion(), authentication, servletRequest);
+            throw exception;
+        }
     }
 
     @GetMapping("/evaluations")
@@ -115,6 +150,22 @@ public class V2Controller {
         result.put("labelSemantics", "IEEE_CIS_TRANSACTION_LABEL_ONLY");
         result.put("orderJoinAllowed", false);
         return result;
+    }
+
+    private void record(OpsLogCode code, String taskType, String taskId,
+                        Authentication authentication, HttpServletRequest request) {
+        record(OpsLogSource.TASK, code, taskType, taskId, authentication, request);
+    }
+
+    private void record(OpsLogSource source, OpsLogCode code, String taskType, String taskId,
+                        Authentication authentication, HttpServletRequest request) {
+        opsLogService.record(source, code.getLevel(), code, null, taskType, taskId,
+                opsLogService.requestId(request), null,
+                authentication == null ? null : authentication.getName(), null, null);
+    }
+
+    private void markTaskFailure(HttpServletRequest request) {
+        request.setAttribute(OpsLogService.TASK_EVENT_ATTRIBUTE, Boolean.TRUE);
     }
 
     private void validateBatchId(String batchId) {
