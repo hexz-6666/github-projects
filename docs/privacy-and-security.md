@@ -34,6 +34,7 @@
 - 不记录请求/响应正文、Authorization、Cookie、数据库密码、密钥、邮箱、电话、地址、支付信息、SQL 参数或模型特征明细。
 - 业务日志只记录 `requestId`、路由模板、状态码、耗时；审计需要时仅记录虚构订单 ID、操作者 ID、结果。生产环境操作者身份须先认证。
 - **M3 运行诊断日志**：仅 `ops_log_event` 固定字段；客户端只能提交固定 code、route key、relatedRequestId、buildVersion，level/摘要由服务端映射；不接受原始 URL/查询、自由文本 summary、actorId、堆栈、请求体、Cookie、SQL、模型特征或任意 safeDetail。
+- **M4 效能总览**：仅 ADMIN；`GET /api/v3/dashboard/overview` 只返回聚合计数/枚举，不返回订单、客户、复核正文或明细 ID；订单按来源分区，不汇总跨币种金额；IEEE-CIS 评测不进入该接口；前端隐藏入口不替代后端鉴权。
 - 客户端 `requestId` 是上报请求自身服务端 ID；`relatedRequestId` 是不可信关联值，只校验 UUID 格式，不参与鉴权。`actorId` 只取 Session。
 - 日志写入失败不影响业务；兜底告警只输出固定 code，限频、无异常消息/堆栈/SQL/请求内容，健康状态为进程级 `DEGRADED`。
 - 运行诊断日志不是不可删除审计：全表 30 天/50,000 条软上限，由专用任务分批清理；无前端服务器日志删除功能。

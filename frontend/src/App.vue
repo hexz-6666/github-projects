@@ -27,6 +27,7 @@ import HealthPage from './pages/HealthPage.vue'
 import WorkOrderQueuePage from './pages/WorkOrderQueuePage.vue'
 import WorkOrderDetailPage from './pages/WorkOrderDetailPage.vue'
 import WorkOrderConfigsPage from './pages/WorkOrderConfigsPage.vue'
+import DashboardPage from './pages/DashboardPage.vue'
 import OpsLogWindow from './components/OpsLogWindow.vue'
 
 const user = ref(null)
@@ -40,6 +41,12 @@ const mobileQuery = window.matchMedia('(max-width: 900px)')
 const isMobile = ref(mobileQuery.matches)
 
 const navGroups = [
+  {
+    label: '运营分析',
+    items: [
+      { name: 'dashboard', label: '效能总览', icon: Activity, adminOnly: true },
+    ],
+  },
   {
     label: '风险业务',
     items: [
@@ -74,6 +81,7 @@ const roleLabels = {
 }
 
 const pages = {
+  dashboard: DashboardPage,
   orders: OrdersPage,
   alerts: AlertsPage,
   quality: DataQualityPage,
@@ -110,6 +118,12 @@ const currentItem = computed(() => {
 })
 
 const isAdmin = computed(() => (user.value?.roles || []).includes('ADMIN'))
+const visibleNavGroups = computed(() => navGroups
+  .map((group) => ({
+    ...group,
+    items: group.items.filter((item) => !item.adminOnly || isAdmin.value),
+  }))
+  .filter((group) => group.items.length))
 
 const roleText = computed(() => {
   if (!user.value?.roles?.length) {
@@ -272,7 +286,7 @@ onBeforeUnmount(() => {
       </div>
 
       <nav class="side-nav">
-        <div v-for="group in navGroups" :key="group.label" class="nav-group">
+        <div v-for="group in visibleNavGroups" :key="group.label" class="nav-group">
           <p class="nav-group-label">{{ group.label }}</p>
           <button
             v-for="item in group.items"

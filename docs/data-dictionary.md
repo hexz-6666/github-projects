@@ -146,3 +146,13 @@ Olist `order_status` 映射：`canceled`/`unavailable` → `CANCELLED`，`create
 基础分 0.05；金额 ≥1000 加 0.45；支付尝试 ≥3 加 0.25；账户年龄 ≤7 天加 0.20；24 小时交易 ≥5 加 0.10；总分上限 0.99。LOW `<0.40`，MEDIUM `[0.40,0.70)`，HIGH `≥0.70`。原因码依次 `HIGH_AMOUNT`、`REPEATED_PAYMENT_ATTEMPTS`、`NEW_ACCOUNT`、`HIGH_VELOCITY`。
 
 这是契约验证规则，未做统计训练、真实标签校准、精确率/召回率评估或有效性承诺。
+
+## 9. M4 效能总览聚合
+
+- `GET /api/v3/dashboard/overview` 只返回聚合计数，不返回订单、客户或复核正文。
+- 订单趋势按 `dwd_order.ordered_at` 和实际 `data_origin` 分组；只计数量，不汇总跨币种金额。
+- 告警、工单、复核分别按 `created_at` 归桶；`work_order.status` 与告警/工单状态快照使用 `asOf`，不冒充历史状态。
+- 复核推进只统计 `ads_alert_review.new_status='RESOLVED'` 的次数，不称工单完成量。
+- 导入只取范围内最近 20 个 `SUCCEEDED/PARTIAL/FAILED` 批次，按 `etl_import_batch.started_at` 倒序；排除 `RUNNING`。
+- DQ 通过率只使用 `dq_check_result.severity IN ('ERROR','WARN')`；INFO 不进入分子/分母，单独计数；无 ERROR/WARN 检查项时为 null。
+- IEEE-CIS `model_evaluation` 不进入该聚合；本版不实现雷达图。

@@ -18,13 +18,19 @@ import org.springframework.transaction.annotation.EnableTransactionManagement;
 public class MysqlConfig {
     @Bean
     public DataSource dataSource(Environment environment) {
-        return DataSourceBuilder.create()
+        HikariDataSource dataSource = DataSourceBuilder.create()
                 .type(HikariDataSource.class)
                 .url(environment.getRequiredProperty("DB_URL"))
                 .username(environment.getRequiredProperty("DB_USERNAME"))
                 .password(environment.getRequiredProperty("DB_PASSWORD"))
                 .driverClassName("com.mysql.cj.jdbc.Driver")
                 .build();
+        dataSource.addDataSourceProperty("connectionTimeZone", "UTC");
+        dataSource.addDataSourceProperty("forceConnectionTimeZoneToSession", "true");
+        // DATETIME values are UTC by contract; pin the session as well so
+        // DATE_FORMAT and boundary predicates cannot depend on the host zone.
+        dataSource.setConnectionInitSql("SET time_zone = '+00:00'");
+        return dataSource;
     }
 
     @Bean

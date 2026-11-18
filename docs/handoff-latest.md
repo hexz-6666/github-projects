@@ -1,8 +1,8 @@
-# M3 交接说明（最新）
+# M4 交接说明（最新）
 
-更新时间：2026-11-13（Asia/Shanghai）
-状态：**M3 结构化运行日志/ADMIN 查询/前端浮窗已完成 Stub/此前浏览器验证；MySQL 未验证；本轮文档收尾未提交 Git。**
-M1 基线提交 `77c35d4`、M2 原提交 `e72bd3a`、M2 corrective patch `9d0f236` 保持未修改、未 amend。M2 最终整改已提交为 `b6e260c`。当前 M3 未提交：19 个 tracked modified、20 个 untracked、0 staged；最终统计见第 8 节。本轮文档收尾未重跑浏览器。
+更新时间：2026-11-18（Asia/Shanghai）
+状态：**M3 已独立提交为 `63ec9b6`；M4 Stub/API/浏览器已验证；M4 Testcontainers MySQL 4/4 已真实执行通过；M2/M3 MySQL IT 仍未执行；M4 未提交 Git。**
+M1 基线提交 `77c35d4`、M2 原提交 `e72bd3a`、M2 corrective patch `9d0f236`、M2 最终提交 `b6e260c` 保持未修改、未 amend。M3 提交 `63ec9b6` 的父提交为 `b6e260c`；当前 M4 改动在工作区，未提交。最终工作区统计见第 11 节。
 
 ## 1. 本阶段实际范围
 
@@ -36,7 +36,7 @@ corrective patch 的数据库改动：
 
 V4 不修改 V1/V3 表数据，不 DROP、不回滚。**V4 对预期结构的干净库、已执行库和缺少对象的部分执行库可重复执行；同名但定义错误的对象不会被自动修复。** 守卫只检查对象名，不比对既有索引/外键/CHECK 的列、引用或定义，因此发布前仍需 schema 预检。
 
-**未在 MySQL 8 执行 V4**：本机有 MySQL 服务但没有可用演示账号，未猜密码。因此 MySQL 的 DDL/FK/CHECK/权限行为均为未验证；`M2MysqlIT` 只有在**同时**设置 `DB_URL`、`DB_USERNAME`、`DB_PASSWORD` 时才运行，本次三项均未设置，测试类在 Spring 上下文前跳过。测试源码现有 8 个 `@Test` 方法，覆盖自包含 fixture、V4 两次执行、精确索引/外键/CHECK 预检、违规版本三元组/非法状态/跨告警复核、唯一键翻译、两个建单线程、建单/复核并发、按 `CreateResult.isIdempotent()` 返回 200/201，以及超长 `request_id` 触发 event 写入失败后的回滚断言；V4 文件路径从 `basedir`/`user.dir` 的当前目录和父目录解析，支持在 `backend` 直接运行及仓库根目录 `mvn -f backend/pom.xml`。审计清理只按本次 fixture 的唯一 `request_id`、`target_type='WORK_ORDER'` 和 `action='WORK_ORDER_CREATED'` 删除，不按裸 `target_id`。但这只是源码与规划，8 个方法均未实际运行，不等于真实执行通过。发布逻辑已按“先插入版本、再更新 `published_version`”实现；这是静态修正，不等于 MySQL 实测通过。
+**M2 历史范围：M2 阶段未在 MySQL 8 执行 V4**：本机有 MySQL 服务但没有可用演示账号，未猜密码。因此 M2 的 DDL/FK/CHECK/权限行为均未验证；该历史结论不适用于 M4，M4 已在隔离 Testcontainers 中执行 V4。`M2MysqlIT` 只有在**同时**设置 `DB_URL`、`DB_USERNAME`、`DB_PASSWORD` 时才运行，本次三项均未设置，测试类在 Spring 上下文前跳过。测试源码现有 8 个 `@Test` 方法，覆盖自包含 fixture、V4 两次执行、精确索引/外键/CHECK 预检、违规版本三元组/非法状态/跨告警复核、唯一键翻译、两个建单线程、建单/复核并发、按 `CreateResult.isIdempotent()` 返回 200/201，以及超长 `request_id` 触发 event 写入失败后的回滚断言；V4 文件路径从 `basedir`/`user.dir` 的当前目录和父目录解析，支持在 `backend` 直接运行及仓库根目录 `mvn -f backend/pom.xml`。审计清理只按本次 fixture 的唯一 `request_id`、`target_type='WORK_ORDER'` 和 `action='WORK_ORDER_CREATED'` 删除，不按裸 `target_id`。但这只是源码与规划，8 个方法均未实际运行，不等于真实执行通过。发布逻辑已按“先插入版本、再更新 `published_version`”实现；这是静态修正，不等于 MySQL 实测通过。
 
 ## 3. 后端与 API
 
@@ -98,7 +98,7 @@ V4 不修改 V1/V3 表数据，不 DROP、不回滚。**V4 对预期结构的干
 | Vue production build | **通过**，2063 modules；JS 153.45 kB / gzip 51.74 kB；CSS 23.19 kB / gzip 5.95 kB；2.24s |
 | Browser `node scripts/browser-check.mjs` | **通过**；1440/901/940/980/390 视口、M1 五页回归、M2 显式转单/领取/开始/完成/取消确认、只读配置预览、队列/详情；`pageErrors=[]`；无横向溢出 |
 | Stub 模式 | 已覆盖配置生命周期、版本/预览、权限、幂等、状态机、备注、SLA 字段、可见性、服务端 actions、并发建单、重复建单副作用、复核/建单并发、旧快照重新读取后拒绝 |
-| MySQL 模式 | **未运行、未验证**（无凭据）；V4 仅静态审查；`M2MysqlIT` 源码扩展但本次跳过 |
+| MySQL 模式（M2 历史范围） | **M2 阶段未运行、未验证**（无凭据）；V4 仅静态审查；`M2MysqlIT` 源码扩展但本次跳过。该结论不适用于 M4；M4 已在隔离 Testcontainers 执行 V4。 |
 
 M2 测试重点覆盖：未登录 401/缺失 CSRF 403、角色 403、草稿不可见、搜索不泄露草稿名称、非法触发器/未知字段、expectedVersion 冲突、发布快照不可变、未发布修改不生效、预览计数、同配置幂等/不同配置 409、配置停用或告警解决后同配置仍幂等、不可见工单重复建单 404 且无详情字段、可见 owner/ADMIN 幂等、`DuplicateWorkOrderException` 回退不泄露、精确不同配置异常在不可见时转 404、状态迁移非法/终态、取消角色、备注权限、复核完成规则、SLA 使用已发布快照、scope 可见性、旧工单不被前 100 条截断、服务端 actions、两个并发建单只产生一个新建、重试只产生一个工单/一个 `CREATED`/一条审计、复核与建单并发不产生“告警已解决后新建”的可观察结果、writer 旧未分派快照在重新读取后已分派给他人时返回 404。`M2MysqlIT` 源码还包含按 `CreateResult.isIdempotent()` 返回 200/201、唯一 requestId 审计清理、V4 路径解析和超长 requestId 触发 event 写入失败的回滚断言，但均未在真实 MySQL 执行。
 
@@ -106,9 +106,9 @@ Stub 并发测试使用同一 JVM 临界区，证明可观察语义，不证明 
 
 ## 6. 三个最高风险点与证据
 
-1. **MySQL 组合外键/守卫仍未实测**：`fk_woc_published_version` 的发布顺序、`fk_wo_resolution_review_alert` 的跨告警拒绝、三列 `fk_wo_config_version_consistent` 的版本一致性都只在 Stub/静态层面验证；V4 的 `PREPARE` 守卫是否在目标 MySQL 客户端版本上完整执行也未验证。证据：`M2MysqlIT` 本次跳过、V4 未执行；不能声称 MySQL 通过。
+1. **M2 历史范围：MySQL 组合外键/守卫仍未实测**：`fk_woc_published_version` 的发布顺序、`fk_wo_resolution_review_alert` 的跨告警拒绝、三列 `fk_wo_config_version_consistent` 的版本一致性都只在 M2 Stub/静态层面验证；M2 阶段 V4 的 `PREPARE` 守卫是否在目标 MySQL 客户端版本上完整执行也未验证。证据：`M2MysqlIT` 当时跳过、M2 的 V4 未执行；不能声称 M2 MySQL 通过。该结论不否定 M4：M4 已在隔离 Testcontainers 中执行 V4。
 2. **真实 MySQL 的并发事务窗口**：`WorkOrderCreateWriter` 依赖告警行 `FOR UPDATE` 串行化建单，Stub 用 `alertMutationLock`/`reviewLock` 模拟；Stub 并发测试证明可观察语义，但不证明 InnoDB 锁等待、`DuplicateKeyException` 翻译、事务回滚、失败时无孤立 `work_order`/事件/审计，或死锁处理。`M2MysqlIT` 已包含这些方向的测试源码（含超长 `request_id` 的 event 失败回滚断言），但 8 个方法均未运行。
-3. **V4 守卫只按对象名判断**：历史违规数据会阻止 V4 加约束，而同名但定义错误的索引/外键/CHECK 不会被自动发现或修复。`M2MysqlIT` 的 schema 预检只在真实数据库运行时才会暴露这种漂移；当前没有真实库可用于演练。
+3. **M2 历史范围：V4 守卫只按对象名判断**：历史违规数据会阻止 V4 加约束，而同名但定义错误的索引/外键/CHECK 不会被自动发现或修复。`M2MysqlIT` 的 schema 预检只在真实数据库运行时才会暴露这种漂移；M2 阶段没有可用真实库演练。M4 的隔离容器已执行 V4 和 smoke check，但不等同于 M2 组合约束/并发事务验证。
 
 ## 7. 当前运行与清理
 
@@ -133,15 +133,34 @@ Stub 并发测试使用同一 JVM 临界区，证明可观察语义，不证明 
 
 - Java 常规全量：**74 tests，74 passed，0 failures/errors/skipped**；**2026-11-13 10:02**，M3 API 6 + M3 Service 8 + M3 Resilience 2。此前 M3 阶段的 **70 项仅为历史结果**，不是当前实测。
 - `M3OpsLogMysqlIT` 源码现有 **5 个 `@Test` 方法**；本次三个 DB 变量未设置，类级跳过（**1 skipped**），5 个方法均未执行，**MySQL canary 未实测**。不写 MySQL 通过。
-- Python 40 passed；Vue 构建通过（2064 modules）；浏览器记录为此前 M3 完成阶段，本轮文档收尾未重跑。
+- 历史 Python 40 passed（本轮未重跑）；Vue 构建通过（2064 modules）；浏览器记录为此前 M3 完成阶段，本轮文档收尾未重跑。
 - 配置事件抖动：同方法无 sleep 连续运行 **10 次，10/10 通过**，此次未复现；**根因仍未定位**，不能声称已修复。
-- M3 统计（最终）：HEAD `b6e260c`；19 个 tracked modified、20 个 untracked、0 staged；tracked **+771/−69**，untracked **20 files / 2,573 lines**，合计 **+3,344/−69**；未提交。
+- M3 历史统计：提交 `63ec9b6`，父提交 `b6e260c`；39 files，**+3,344/−69**；该 74 项结果为 M3 当时结果，不是 M4 当前结果。
 - 详见 [verification.md](verification.md) 与 [api-contract-v3-ops-logs.md](api-contract-v3-ops-logs.md)。
 
 ## 9. 文档口径
 
-`docs/acceptance-checklist.md` 仍是历史 v2 验收快照（Java 33、无 M2/M3/V4/V5 章节），本次未改写；它不能作为当前 M3 验收结果。当前口径以 [verification.md](verification.md) 和本文件为准。
+`docs/acceptance-checklist.md` 仍是历史 v2 验收快照（Java 33、无 M2/M3/M4/V4/V5 章节），本次未改写；它不能作为当前 M3/M4 验收结果。当前口径以 [verification.md](verification.md) 和本文件为准。
 
-## 10. 下一阶段
+## 10. M4 效能总览
 
-**M3 已完成但未提交；M4/M5 尚未开始。** 没有扩展看板、图表、ECharts、实时推送、通用调度平台或 Python 改动。
+已实现：
+
+- ADMIN-only `GET /api/v3/dashboard/overview`；UTC、`[from,to)`、最大 366 天、默认周、日粒度 ≤90 天、ISO 周一、首尾 partial。
+- 订单按 `dwd_order.data_origin` 分区，只计数量；告警/新建工单/复核推进按 `created_at` 归桶；当前告警/工单状态独立 `asOf` 快照。
+- 导入只取范围内最近 20 个 `SUCCEEDED/PARTIAL/FAILED` 批次，排除 `RUNNING`，同时间按 `batch_id DESC`；DQ 通过率只使用 ERROR/WARN，INFO 单独计数，并按 `sourceSystem` 分开。
+- 复核推进只按 `new_status='RESOLVED'`，不再按 `review_result` 过滤；Stub 含 `INCONCLUSIVE`+RESOLVED fixture。告警/工单快照分别有 `alertsHasData`/`workOrdersHasData`。
+- 导入批次图按批次展示来源、ID、状态和接收/拒绝；FAILED 使用失败色，不再使用成功色。
+- 前端 `DashboardPage` + 原生 SVG/CSS 折线、环图、柱状图；无雷达、无 ECharts、无 V6。
+- MySQL 隔离验证使用 Testcontainers 1.20.4 + `mysql:8.0.36`（digest `sha256:a532724022429812ec797c285c1b540a644c15e248579c6bfdf12a8fbaab4964`）；V1、V3、V4、V5 初始化成功，未加载 V2 种子。
+- Java 全量：**101 passed，0 failures/errors/skipped**（不含 `*IT`）；M4DashboardApiTest 13 项 + M4DashboardServiceTest 3 项 + M4ApiVersionLifecycleTest 7 项 + M4ApiVersionEngineLifecycleTest 4 项。
+- `M4DashboardMysqlIT` required 模式：**4 tests，4 passed，0 failures，0 errors，0 skipped**，耗时 25.013s；覆盖真实 MySQL UTC、DATETIME、日/周边界、范围末端、来源分区、DQ（含 INFO-only null）、RUNNING 排除、稳定排序、20 条限制、快照、复核和权限。
+- 本轮未停止 Docker；此前 required 无 Docker 失败验证是历史结果，不作为本轮结果。M2/M3 MySQL IT 仍为 1 skipped，未执行。
+- `api.version` 为 JVM/进程级属性；恢复 System property 不会重置已缓存的 `DockerClientFactory` client，本 fork 内其他 Testcontainers 测试会复用 API 1.41；不是严格类级隔离。
+- `TEST_LOCK` 只保护 `M4ApiVersionEngineLifecycleTest` 的属性读写；`DockerGate`/`ApiVersionCleanup`/`M4DashboardMysqlIT` 不持有该锁。`mvn help:effective-pom` 未声明 Surefire `forkCount`、`reuseForks` 或 `parallel`；按 Surefire 2.22.2 默认 `forkCount=1`、`reuseForks=true`，未做并行运行验证。同一 JVM/Surefire fork 内不得并行运行会读写全局 `api.version` 的 M4 测试。独立 Surefire fork 通常有独立 JVM/System properties，不因本限制一概禁止，除非配置/运行方式显式共享同一 JVM；不得声称线程级隔离。
+- 生命周期回归：`M4ApiVersionLifecycleTest` **7/7**、`M4ApiVersionEngineLifecycleTest` **4/4**；后者使用 JUnit Platform Launcher 1.8.2 真实运行辅助 fixture，覆盖 class disabled、enabled AfterAll、测试失败和 BeforeAll 失败；Spring 上下文加载失败未单独模拟。常规 Java **101/101**；M4DashboardMysqlIT 普通 **4/4**、required **4/4**。
+- 浏览器（此前记录，本轮未重跑）：M4 入口、SVG 图 + 数据表、告警/工单快照不对称、30 天空态、FAILED 导入状态/颜色、加载失败态、DQ 来源表为主且无全局通过率卡片、1440/390、reviewer 无入口；`pageErrors=[]`。
+
+## 11. 工作区与下一阶段
+
+当前 M4 corrective 改动未提交：HEAD `63ec9b6`；12 个 tracked modified、20 个 untracked、0 staged；tracked **+687/−31**，untracked **20 files / 3,132 lines**，合计 **32 files / +3,819/−31**。M5 尚未开始；没有雷达图、ECharts 或 V6 索引；M4 MySQL 隔离测试已实际通过，M2/M3 MySQL 仍未执行。

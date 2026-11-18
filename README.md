@@ -1,6 +1,6 @@
 # 电商订单轻量数仓 · 欺诈交易异常检测演示
 
-本科毕设规模的 **Vue 3 + Spring Boot + FastAPI + MySQL 8.0** 最小项目。v2 在 v1 契约上增量实现：订单概览、异常队列、详情与人工复核、数据质量、模型评估五个页面；会话登录、角色权限、CSRF、审计；Olist/IEEE-CIS 分源导入、幂等批次与数据质量；IEEE-CIS 独立训练/评测。M2 增加风险告警工单与配置生命周期；M3 增加 ADMIN 结构化运行日志查询和前端浮窗。**不是完整业务系统，不是大规模分布式数仓，不包含论文。**
+本科毕设规模的 **Vue 3 + Spring Boot + FastAPI + MySQL 8.0** 最小项目。v2 在 v1 契约上增量实现：订单概览、异常队列、详情与人工复核、数据质量、模型评估五个页面；会话登录、角色权限、CSRF、审计；Olist/IEEE-CIS 分源导入、幂等批次与数据质量；IEEE-CIS 独立训练/评测。M2 增加风险告警工单与配置生命周期；M3 增加 ADMIN 结构化运行日志查询和前端浮窗；M4 增加 ADMIN 效能总览与 SVG 折线/环图/柱状图。**不是完整业务系统，不是大规模分布式数仓，不包含论文。**
 
 > 全部运行数据为虚构或按来源隔离的本地演示数据。规则分不是真实欺诈概率，告警不是欺诈事实，复核结论不是客观真值，页面掩码不是加密。Olist 没有直接欺诈标签；IEEE-CIS 的 `isFraud` 只在其自身交易域有效；两者不得拼接或互相补标。
 
@@ -12,13 +12,13 @@ beysesji/
 │   ├── src/App.vue                # 登录、导航、哈希路由与权限态
 │   ├── src/api.js                 # 相对路径 API、CSRF、错误处理
 │   ├── src/pages/                 # 登录/订单/告警/详情复核/质量/模型/健康
-│   ├── src/components/            # M3 运行日志浮窗
+│   ├── src/components/            # M3 运行日志浮窗、M4 SVG 图表
 │   ├── src/style.css
 │   └── vite.config.js             # 127.0.0.1:5173，/api 代理到 8080
 ├── backend/                       # Spring Boot 对外 API、事务、审计、导入协调
 │   ├── src/main/java/com/example/fraud/
 │   ├── src/main/resources/application.yml
-│   ├── src/test/java/             # 74 项 MockMvc/服务/模型客户端测试
+│   ├── src/test/java/             # 101 项 MockMvc/服务/模型客户端测试
 │   └── pom.xml
 ├── model-service/                 # FastAPI v1 规则评分 + v2 IEEE 训练/评测
 │   ├── app/{main,schemas,scoring,training}.py
@@ -37,6 +37,7 @@ beysesji/
 │   ├── api-contract.md            # 冻结的 v1 契约
 │   ├── api-contract-v2.md         # 认证/导入/质量/审计/模型增量契约
 │   ├── api-contract-v3-ops-logs.md # M3 运行日志与客户端错误契约
+│   ├── api-contract-v3-dashboard.md # M4 ADMIN 聚合看板契约
 │   ├── data-dictionary.md         # ODS/DWD/DWS/ADS 与 v2 表
 │   ├── data-sources.md            # 来源、许可、核验日期、限制
 │   ├── privacy-and-security.md    # 虚构数据、掩码、密钥、日志
@@ -57,7 +58,7 @@ beysesji/
 ## 2. 调用关系与边界
 
 ```text
-Vue 3 → Spring Boot → MySQL（订单/特征/评分/告警/复核/导入/审计/模型/M3 运行日志）
+Vue 3 → Spring Boot → MySQL（订单/特征/评分/告警/复核/导入/审计/模型/M3 运行日志/M4 聚合看板）
                   └──→ FastAPI（v1 规则健康/评分；v2 IEEE 训练/评测）
 ```
 
@@ -183,7 +184,7 @@ try {
 }
 ```
 
-MySQL 与模型均正常时健康才返回 200 `UP`。本机当前**没有**可用演示账号，因此 V1–V5、真实 CRUD、事务、并发幂等、运行日志清理和 200 UP **未被声称验证**。
+MySQL 与模型均正常时健康才返回 200 `UP`。本机当前**没有**可用演示账号；M4 隔离容器已验证 V1、V3、V4、V5 的 DDL 与看板聚合，但 V2 种子、M2/M3 的真实 CRUD、事务、并发幂等、运行日志清理及生产 200 `UP` **仍未验证**。
 
 ## 6. API 与最小调用示例
 
@@ -207,11 +208,14 @@ MySQL 与模型均正常时健康才返回 200 `UP`。本机当前**没有**可�
 | POST | `/api/v2/models/train` | IEEE 训练/评测 | ADMIN |
 | GET | `/api/v2/evaluations` | 评测指标 | 登录 |
 | GET | `/api/v2/ieee/summary` | 独立评测域统计 | 登录 |
+| GET | `/api/v3/dashboard/overview?from=&to=&bucket=week` | ADMIN 效能总览聚合（UTC，最大 366 天） | ADMIN |
 | GET | `/api/v3/ops/logs?minLevel=WARN&limit=50` | 结构化运行日志，游标分页 | ADMIN |
 | GET | `/api/v3/ops/health` | 日志存储进程级健康/降级信号 | ADMIN |
 | POST | `/api/v3/ops/client-errors` | 固定字段客户端 API 失败上报，单实例限流 | 登录 + CSRF |
 
 M3 运行日志入口仅 ADMIN 可见，位于右下角；打开且未暂停时每 5 秒轮询，默认 WARN，可查看 INFO 及以上，支持暂停、加载更早、清屏当前视图和移动端。日志只按文本渲染，不读取任意服务器文件，不提供服务器日志删除。
+
+M4 效能总览仅 ADMIN 可见，使用原生 SVG/CSS 折线、环图和柱状图，不引入图表依赖；订单按 OLIST/SYNTHETIC 分开且不汇总金额，IEEE-CIS 评测不进入该接口。当前范围无数据时显示真实空态，当前状态快照单独标注 `asOf`。详见 [api-contract-v3-dashboard.md](docs/api-contract-v3-dashboard.md)。
 
 PowerShell 登录 + CSRF 示例（不要把密码写入脚本或历史）：
 
@@ -236,7 +240,7 @@ Invoke-RestMethod "$base/api/v1/alerts/1/reviews" -Method Post -WebSession $sess
 .\scripts\verify.ps1
 ```
 
-运行前停止 `dev.ps1` 启动的后端，避免 Maven 与运行进程共享 `backend/target/classes`。脚本执行 Python 40 项、Java 74 项、Vue 生产构建；不把 MySQL DDL/凭据验证自动算通过。
+运行前停止 `dev.ps1` 启动的后端，避免 Maven 与运行进程共享 `backend/target/classes`。脚本执行 Python 40 项、Java 101 项、Vue 生产构建；不把 MySQL DDL/凭据验证自动算通过。
 
 浏览器验收（可选，不进入生产依赖）：
 
@@ -246,7 +250,7 @@ $env:PLAYWRIGHT_MODULE = "$PWD\runtime\browser-tools\node_modules\playwright-cor
 node scripts\browser-check.mjs
 ```
 
-当前实测（2026-11-13 10:02）：Python 40 passed、Java 全量（不含门控 MySQL IT）**74 passed**（0 failures/errors/skipped）、Vue build 通过；浏览器记录仍为此前 M3 完成阶段的结果，本轮文档收尾未重跑。`M2MysqlIT`、`M3OpsLogMysqlIT` 单独运行时因未设置三个数据库环境变量而跳过；其中 `M3OpsLogMysqlIT` 源码有 5 个测试方法，本次类级跳过、5 个方法均未执行、MySQL canary 未实测。MySQL V1–V5、运行日志清理及真实事务仍未执行、未验证。此前 M3 阶段为 70 项，**70 是历史结果，不是当前实测**。详见 [verification.md](docs/verification.md)。
+当前实测（2026-11-18）：Python 40 passed 是**历史结果，本轮未重跑**；Java 全量 **101 passed**（0 failures/errors/skipped；不含 `*IT`）、Vue build 通过、M4 浏览器验收通过（1440/390，`pageErrors=[]`；前端构建/浏览器为此前记录，本轮未重跑）。`M4DashboardMysqlIT` 已在一次性 Testcontainers MySQL 8.0.36 容器中执行 **4 tests，4 passed，0 skipped**；M2/M3 MySQL IT 仍为 **1 skipped**，未执行、未验证。M4 MySQL 使用 V1、V3、V4、V5，不加载 V2 种子；常规 101 项不包含这 4 项。此前 M3 阶段为 74 项和更早的 70 项，**均为历史结果，不是当前实测**。详见 [verification.md](docs/verification.md)。
 
 ## 8. 来源许可与安全
 
@@ -277,4 +281,4 @@ node scripts\browser-check.mjs
 
 ### 9.3 当前基线
 
-Python **40** 项、Java **74** 项测试通过；Vue 构建通过；浏览器记录为此前 M3 完成阶段的结果，本轮文档收尾未重跑。Java 的 **33** 项是历史 v2 基线（ApiContract 14 + ModelClient 11 + V2 8），Java 的 **70** 项是此前 M3 阶段历史结果，均不是当前实测。MySQL 的 V1–V5、真实 200 UP、`FOR UPDATE`、FK/CHECK、事务失败回滚、运行日志清理及唯一键并发 **未验证**；外部真实 Olist/IEEE 数据未导入，端到端只用合成烟测文件。[acceptance-checklist.md](docs/acceptance-checklist.md) 是历史 v2 验收快照（仍写 33 项），不作为当前 M3 验收口径；当前结果见 [verification.md](docs/verification.md)。
+Python **40** 项为历史结果、本轮未重跑；Java **101** 项测试通过；Vue 构建通过；M4 浏览器验收通过（1440/390，`pageErrors=[]`；前端构建/浏览器为此前记录，本轮未重跑）。Java 的 **33** 项是历史 v2 基线（ApiContract 14 + ModelClient 11 + V2 8），**74** 和 **70** 项是此前 M3 阶段历史结果，均不是当前实测。MySQL 仅 **M4 隔离 Testcontainers 环境**已验证 V1、V3、V4、V5；V2 种子、M2/M3 MySQL IT、生产数据、查询计划和性能 **未验证**。外部真实 Olist/IEEE 数据未导入，端到端只用合成烟测文件。[acceptance-checklist.md](docs/acceptance-checklist.md) 是历史 v2 验收快照（仍写 33 项），不作为当前 M4 验收口径；当前结果见 [verification.md](docs/verification.md)。

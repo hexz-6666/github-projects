@@ -72,12 +72,22 @@ Vue 不直连 Python/MySQL；Python 不访问 MySQL、不处理复核事务。
 - 保留策略为 30 天/50,000 条软上限，由专用保留任务分批清理；不是通用调度平台。
 - 前端仅 ADMIN 右下角浮窗，打开且未暂停时 5 秒轮询；无后台未读轮询、无服务器删除。
 
-## 7. 数据隐私与安全
+## 7. M4 效能总览
+
+- 新增 ADMIN-only `GET /api/v3/dashboard/overview`；只返回聚合计数，不返回订单/客户/复核正文。
+- 时间固定 UTC，`[from,to)`，最大 366 天；默认最近 366 天、ISO 周；日粒度最多 90 天；首尾 partial。
+- 订单趋势按实际 `dwd_order.data_origin` 分开（OLIST/SYNTHETIC），只计数量，不汇总跨币种金额；IEEE-CIS 评测不进入接口。
+- 趋势按创建时间补零；当前告警/工单状态是独立 `asOf` 快照，不冒充历史状态。
+- 导入只取范围内最近 20 个终态批次（SUCCEEDED/PARTIAL/FAILED），排除 RUNNING；DQ 通过率只使用 ERROR/WARN，INFO 单独计数。
+- 前端使用原生 SVG/CSS 折线、环图、柱状图，不引入 ECharts；不实现雷达图。
+- 未新增 V6 索引；大数据量查询性能仍依赖后续独立审批。
+
+## 8. 数据隐私与安全
 
 见 [privacy-and-security.md](privacy-and-security.md)。核心：仅虚构/匿名演示；最少字段；掩码≠加密；确需敏感字段才引入应用层 AES-GCM 与仓库外密钥；日志不记录明文敏感值、密码、Cookie、原始载荷；外部数据按许可隔离，不公开再分发 IEEE-CIS 行级数据。
 
-## 8. 交付验收边界
+## 9. 交付验收边界
 
-已实现：五页、会话认证/RBAC/CSRF、导入幂等与质量、审计、模型注册/时间切分评测、v1 规则评分、stub/MySQL 双实现、M2 工单、M3 结构化运行日志、自动化测试与浏览器断言。
+已实现：五页、会话认证/RBAC/CSRF、导入幂等与质量、审计、模型注册/时间切分评测、v1 规则评分、stub/MySQL 双实现、M2 工单、M3 结构化运行日志、M4 效能总览、自动化测试与浏览器断言。
 
 未验收：MySQL V1–V5 实际执行、200 UP、事务/约束/JSON/UTC/日志游标与保留清理真实行为；外部真实 Olist/IEEE 数据导入；真实模型效果；生产部署、TLS、限流（除客户端上报单实例限流外）、备份恢复、密钥管理、依赖漏洞全扫。以 [verification.md](verification.md) 为准。

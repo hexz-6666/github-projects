@@ -117,9 +117,9 @@ M1 收尾通过断言：
 
 ## 7. 未验证与阻塞
 
-### MySQL（明确未验收）
+### MySQL（M2/M3 明确未验收；M4 隔离验证见第 10 节）
 
-- **未执行** V1–V5、`verify_synthetic.sql`；未验证 6+6+4 张表加 `ops_log_event`、约束、索引、外键、JSON、UTC、导入、事务、运行日志游标/保留、并发幂等。
+- M2/M3 **未执行** V1–V5、`verify_synthetic.sql`；未验证 6+6+4 张表加 `ops_log_event`、约束、索引、外键、JSON、UTC、导入、事务、运行日志游标/保留、并发幂等。M4 已在隔离容器执行 V1、V3、V4、V5（不含 V2 种子）。
 - **V4 对预期结构的干净库、已执行库和缺少对象的部分执行库可重复执行；同名但定义错误的对象不会被自动修复。** 守卫只检查对象名，不比对既有索引/外键/CHECK 的列、引用表、列或定义。
 - 未达到 200 `UP`；`storageMode=mysql` 的真实连接/查询/评分/复核/日志未运行。
 - `M2MysqlIT` 的 8 个、`M3OpsLogMysqlIT` 的 5 个测试方法均未实际执行；`FOR UPDATE`、FK、CHECK、事务失败回滚（event 超长 `request_id` 场景）、唯一键并发、日志保留清理和 `DuplicateKeyException` 翻译没有被本次执行证明。
@@ -150,7 +150,7 @@ M1 收尾通过断言：
 | Vue production build | **通过**；2063 modules；JS 153.45 kB / gzip 51.74 kB；CSS 23.19 kB / gzip 5.95 kB；2.24s |
 | Browser `browser-check.mjs`（同日最终重跑） | **通过**；1440/901/940/980/390 视口；M1 五页回归 + M2 转单/领取/开始/完成/取消确认 + 只读配置预览 + 队列/详情；`pageErrors=[]`；无横向溢出 |
 | `mvn -q "-Dtest=M2MysqlIT" test`（14:50） | **1 test，1 skipped，0 failures/errors**；`DB_URL`、`DB_USERNAME`、`DB_PASSWORD` 均未设置，类级条件在 Spring 上下文前跳过；未连接数据库 |
-| MySQL V4 / 真实事务 | **未执行、未验证**；无可用演示账号；不能把上面 58 条 Stub 结果当成 MySQL 成功 |
+| MySQL V4 / 真实事务（M2 历史范围） | **M2 阶段未执行、未验证**；无可用演示账号；不能把上面 58 条 Stub 结果当成 MySQL 成功。该结论不适用于 M4：M4 已在隔离 Testcontainers 中执行 V4。 |
 
 58 项是原 57 项加上本次新增的 writer 旧快照回归测试（`M2WorkOrderServiceTest` 从 4 项变为 5 项），不是把历史 33 项当成当前结果；README 中的 33 项已明确标为历史 v2 基线。
 
@@ -204,8 +204,52 @@ M2 新增 API 契约见 [api-contract-v3-work-orders.md](api-contract-v3-work-or
 
 ### 9.3 文档口径
 
-`docs/acceptance-checklist.md` 仍是历史 v2 快照（Java 33、无 M2/M3/V4/V5 章节），本次未改写；当前 M3 验收以本文和 [handoff-latest.md](handoff-latest.md) 为准。
+`docs/acceptance-checklist.md` 仍是历史 v2 快照（Java 33、无 M2/M3/M4/V4/V5 章节），本次未改写；当前 M3/M4 验收以本文和 [handoff-latest.md](handoff-latest.md) 为准。
 
 ### 9.4 未复现的测试抖动
 
 一次中间全量运行在 `M3OpsLogApiTest.configValidationAndPublishFailuresDoNotLeaveCompletedEvents` 的成功发布事件断言上失败；同一方法单独重跑、随后两次全量均通过，未再复现。本轮又在无 sleep、无随机延迟的情况下精确重跑该方法 10 次，10/10 通过；并增加成功发布后的 `/api/v3/ops/health` `UP` 与 `writeFailureCount=0` 诊断断言。根因仍未定位，此次未复现；该现象可能与本地 dev 进程共享 `target/classes` 或上下文时序有关，但没有证据证明。不能声称已修复或绝对无偶发失败。
+
+## 10. 2026-11-18 M4 效能总览（含隔离 MySQL 验证）
+
+### 10.1 实际结果
+
+| 项目 | 实际结果 |
+|---|---|
+| Java 全量 `mvn clean test`（2026-11-18，不含 `*IT`） | 常规 Java **101/101**（101 tests，101 passed，0 failures，0 errors，0 skipped）；M2 58 + M3 16 + M4DashboardApiTest 13 + M4DashboardServiceTest 3 + M4ApiVersionLifecycleTest 7 + M4ApiVersionEngineLifecycleTest 4 |
+| Vue production build | **此前记录，本轮未重跑**；2070 modules；JS 183.97 kB / gzip 61.03 kB；CSS 31.24 kB / gzip 7.44 kB；3.60s |
+| Browser `browser-check.mjs` | **此前记录，本轮未重跑**；M4 ADMIN 入口、SVG 图 + 数据表、告警/工单快照不对称、30 天空态、FAILED 导入状态/颜色、加载失败态、DQ 来源表为主且无全局通过率卡片、1440/390、reviewer 无入口；`pageErrors=[]` |
+| `M4DashboardMysqlIT`（Testcontainers，required） | **4 tests，4 passed，0 failures，0 errors，0 skipped**；耗时 25.013s；隔离 MySQL 8.0.36 容器；V1、V3、V4、V5 初始化成功 |
+| `M4DashboardMysqlIT`（Testcontainers，普通模式） | **4 tests，4 passed，0 failures，0 errors，0 skipped**；耗时 40.355s |
+| MySQL 镜像 | `mysql:8.0.36`，digest `sha256:a532724022429812ec797c285c1b540a644c15e248579c6bfdf12a8fbaab4964`，linux/amd64；Docker Engine 29.9.3 |
+| M2/M3 MySQL IT | `M2MysqlIT` 1 skipped；`M3OpsLogMysqlIT` 1 skipped；均仍未执行，不能声称 MySQL 通过 |
+
+### 10.2 M4 覆盖
+
+- `/api/v3/dashboard/overview` 仅 ADMIN；UTC、`[from,to)`、最大 366 天、默认周、日粒度 ≤90 天、ISO 周一、首尾 partial。
+- 趋势补零、固定类别 0 计数、列表空数组、顶层/section `hasData`；当前状态快照独立 `asOf`。
+- 订单按实际 `data_origin` 分区，只计数量；IEEE-CIS 评测不进入接口。
+- DQ 通过率只用 ERROR/WARN；INFO 单独计数；无 ERROR/WARN 为 null；顶层汇总标记 `ALL_ENDED_BATCHES`，`bySource` 分开 Olist/IEEE-CIS；UI 以来源通过率为主，不突出跨来源合并通过率；导入只取最近 20 个终态批次，排除 RUNNING，同 `started_at` 按 `batch_id DESC`。
+- `snapshot.asOf` 为请求生成时间并标记 `asOfKind=REQUEST_GENERATION_TIME`，不承诺跨表历史一致性。
+- 工单新建仅按 `created_at`；当前状态独立快照；“已解决”仅 `status=RESOLVED`；复核只称推进次数。
+- `reviewResolvedCounts` 只按 `new_status='RESOLVED'`；MySQL 隔离 fixture 已覆盖 `INCONCLUSIVE + RESOLVED` 计入、`INCONCLUSIVE + REVIEWING` 不计入。
+- 告警/工单快照分别返回 `alertsHasData`、`workOrdersHasData`；MySQL fixture 同时有 HIGH/LOW 告警和 RESOLVED/OPEN 工单。
+- 首版折线/环图/柱状图使用原生 SVG/CSS；无雷达图、无 ECharts、无 V6 索引。
+- MySQL 隔离测试使用 Testcontainers 1.20.4、`MySQLContainer`、`@DynamicPropertySource` 和唯一 fixture；数据库初始化严格按 V1、V3、V4、V5，未加载 V2 种子；V4 的 `PREPARE/EXECUTE` 条件 DDL 实际执行并通过 schema smoke check。
+- 测试断言容器实际 URL/host/随机端口/`fraud_demo`，并覆盖 session UTC、JDBC DATETIME 往返、日/周边界、范围末端排除、来源分区、DQ scope/bySource/passRate/null、RUNNING 排除、稳定排序、20 条限制、快照 `asOf/asOfKind`、复核规则和权限。
+- fixture 使用 `M4IT-<runId>` 前缀；测试后按外键逆序清理，`M4MysqlFixture.assertClean` 已验证 prefix 归零；容器销毁作为最终隔离保障。
+- 默认范围/权限请求均带显式 `from/to`；另验证“趋势窗口无数据但 snapshot 仍有告警/工单”的独立性。
+- 普通模式使用 Testcontainers 原生可用性检测；required 模式不做 Docker 预检，容器/镜像/schema/连接失败直接非零失败。
+
+### 10.3 限制
+
+- M4 MySQL 已在一次性 Testcontainers 中执行；SQL/索引/聚合性能仍未实测，不能声称性能通过。
+- `M4DashboardMysqlIT` 的 4 项为真实 MySQL 结果，不包含在常规 101 项中；常规 101 项不依赖 MySQL。
+- 生命周期回归 `M4ApiVersionLifecycleTest` **7/7** 覆盖 helper、类级 disabled、enabled + AfterAll、重复评估、RuntimeException/Error；`M4ApiVersionEngineLifecycleTest` **4/4** 使用 JUnit Platform Launcher 真实运行辅助 fixture，覆盖 disabled、enabled、测试失败和 BeforeAll 失败。M4DashboardMysqlIT 普通 **4/4**、required **4/4**。
+- JUnit Platform Launcher 为 `1.8.2` test-scope，与 Spring Boot 2.7.18/JUnit Jupiter 5.8.2 对齐；未升级 Jupiter/Surefire，未新增 EngineTestKit。
+- 引擎级测试验证了测试方法失败和 `@BeforeAll` 失败时的 AfterAll 恢复；Spring ApplicationContext 加载失败未单独模拟，不能声称该路径已被引擎级证明。
+- `api.version` 是 JVM/进程级属性；恢复 System property 不会重置已被 `DockerClientFactory` 缓存的 client。本 fork 内若还有其他 Testcontainers 测试，会复用已初始化的 API 1.41 client；不是严格的类级隔离，必要时应拆分 Surefire fork。
+- `TEST_LOCK` 只保护 `M4ApiVersionEngineLifecycleTest` 内的属性读写；`DockerGate`、`ApiVersionCleanup` 和 `M4DashboardMysqlIT` 本身不持有该锁。`mvn help:effective-pom` 未声明 Surefire `forkCount`、`reuseForks` 或 `parallel`；按 Surefire 2.22.2 默认 `forkCount=1`、`reuseForks=true`，但本轮未做并行运行验证。同一 JVM/Surefire fork 内不得并行运行会读写全局 `api.version` 的 M4 测试；独立 Surefire fork 通常有独立 JVM/System properties，不因本限制一概禁止，除非配置或运行方式显式共享同一 JVM。不得声称已实现线程级隔离。
+- 本地运行因无法拉取 `testcontainers/ryuk:0.11.0`，使用 `TESTCONTAINERS_RYUK_DISABLED=true`，依赖 Testcontainers extension 停止容器；测试后 `docker ps -a` 无残留容器。CI 有 Ryuk 网络时应启用 Ryuk。
+- 本轮未停止 Docker Desktop；此前 required 无 Docker 失败结果是历史验证，不作为本轮结果。
+- 历史 M3 的 74 项是当时结果，不能覆盖为当前 101 项；当前口径以本节为准。

@@ -145,6 +145,11 @@ const indexedDbScan = scanFrontendForIndexedDb()
 assert(indexedDbScan.hits.length === 0, `Frontend source uses IndexedDB: ${indexedDbScan.hits.join(', ')}`)
 
 async function noHorizontalOverflow(page, label) {
+  await page.waitForFunction(
+    () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    null,
+    { timeout: 3000 },
+  ).catch(() => {})
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
   )
@@ -553,12 +558,108 @@ try {
   await waitForNoLoading(page, '正在加载告警')
   await page.locator('tbody tr').first().getByRole('button').click()
   await page.getByRole('heading', { name: /告警详情/ }).waitFor()
+
   await page.getByLabel('复核结论').selectOption('INCONCLUSIVE')
   await page.getByLabel(/备注/).fill('M1 收尾验收：虚构复核记录')
   await page.getByRole('button', { name: '提交复核' }).click()
   await page.getByText('复核已记录，历史已追加。').waitFor()
   await capture(page, 'ui-v3-alert-detail-1440.png', 'Desktop alert detail')
 
+  await switchUser('demo_admin', adminPassword)
+  // M4: run before work-order creation so the work-order snapshot is genuinely empty.
+  await navigateDesktop(page, '效能总览', '效能总览')
+  await page.locator('.chart-svg').first().waitFor()
+  const realOverview = await page.evaluate(async () => {
+    const response = await fetch('/api/v3/dashboard/overview', { credentials: 'same-origin' })
+    return response.json()
+  })
+  assert(realOverview.snapshot.alertsHasData === true,
+    'Dashboard alert snapshot should have data from the synthetic seed')
+  assert(realOverview.snapshot.workOrdersHasData === false,
+    'Dashboard work-order snapshot should be empty before work-order creation')
+  await page.getByText('当前没有工单记录。').waitFor()
+  assert((await page.locator('.chart-data').count()) >= 3,
+    'Dashboard accessibility data tables are missing')
+  await capture(page, 'ui-v4-dashboard-1440.png', 'Admin dashboard')
+  await page.getByRole('button', { name: '近 30 天' }).click()
+  await page.getByText('当前范围没有订单；可切换到近 366 天查看演示种子。').waitFor()
+  await noHorizontalOverflow(page, 'Dashboard empty range')
+
+  const dashboardPattern = '**/api/v3/dashboard/overview?*'
+  const fixture = JSON.parse(JSON.stringify(realOverview))
+  fixture.imports = {
+    hasData: true,
+    batches: [
+      { batchId: 'M4-FAILED', sourceSystem: 'OLIST', status: 'FAILED',
+        startedAt: '2026-11-03T00:00:00Z', acceptedRows: 0, rejectedRows: 7 },
+      { batchId: 'M4-PARTIAL', sourceSystem: 'IEEE_CIS', status: 'PARTIAL',
+        startedAt: '2026-11-04T00:00:00Z', acceptedRows: 10, rejectedRows: 2 },
+    ],
+  }
+  fixture.dq = {
+    hasData: true,
+    scope: 'ALL_ENDED_BATCHES',
+    totalChecks: 3,
+    evaluatedChecks: 2,
+    infoChecks: 1,
+    infoFailed: 0,
+    failedError: 0,
+    failedWarn: 1,
+    passRate: 0.5,
+    bySource: [
+      { sourceSystem: 'IEEE_CIS', hasData: true, totalChecks: 1, evaluatedChecks: 1,
+        infoChecks: 0, infoFailed: 0, failedError: 0, failedWarn: 1, passRate: 0.0 },
+      { sourceSystem: 'OLIST', hasData: true, totalChecks: 2, evaluatedChecks: 1,
+        infoChecks: 1, infoFailed: 0, failedError: 0, failedWarn: 0, passRate: 1.0 },
+    ],
+  }
+  await page.route(dashboardPattern, (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(fixture),
+  }))
+  await page.getByRole('button', { name: '刷新' }).click()
+  await page.locator('.import-batch.status-failed').first().waitFor()
+  assert((await page.locator('.import-batch.status-failed').count()) === 1,
+    'Failed import batch is not visually marked')
+  assert((await page.locator('.import-status--status-failed').innerText()).includes('失败'),
+    'Failed import status text is missing')
+  assert((await page.locator('.import-batch.status-failed .import-track i').first()
+    .evaluate((element) => getComputedStyle(element).backgroundColor)) === 'rgb(184, 75, 75)',
+    'Failed import accepted bar does not use the failure color')
+  assert((await page.locator('.import-chart table').count()) === 1,
+    'Import batch accessibility table is missing')
+  assert((await page.locator('.dq-source-table').count()) === 1,
+    'DQ source-domain table is missing')
+  assert((await page.locator('.dq-source-table').innerText()).includes('IEEE_CIS')
+    && (await page.locator('.dq-source-table').innerText()).includes('OLIST'),
+    'DQ source-domain table does not separate IEEE_CIS and OLIST')
+  assert((await page.getByText('通过率（ERROR/WARN）', { exact: true }).count()) === 0,
+    'Global DQ pass rate is still presented as a primary card')
+  await capture(page, 'ui-v4-dashboard-imports-1440.png', 'Dashboard import batch states')
+  await page.unroute(dashboardPattern)
+
+  await page.route(dashboardPattern, (route) => route.fulfill({
+    status: 500,
+    contentType: 'application/json',
+    body: '{"code":"INTERNAL_ERROR","message":"fixture"}',
+  }))
+  await page.getByRole('button', { name: '刷新' }).click()
+  await page.locator('.error-box').waitFor()
+  await page.unroute(dashboardPattern)
+  await page.getByRole('button', { name: '刷新' }).click()
+  await page.getByRole('heading', { name: '效能总览' }).waitFor()
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByRole('heading', { name: '效能总览' }).waitFor()
+  await noHorizontalOverflow(page, 'Dashboard mobile')
+  await page.screenshot({ path: `${outputDir}/ui-v4-dashboard-390.png`, fullPage: true })
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await switchUser('demo_reviewer', demoPassword)
+  await navigateDesktop(page, '异常队列', '异常队列')
+  await waitForNoLoading(page, '正在加载告警')
+  await page.locator('tbody tr').first().getByRole('button').click()
+  await page.getByRole('heading', { name: /告警详情/ }).waitFor()
   // M2: explicit alert conversion, claim/start/resolve, and read-only config preview.
   await page.getByTestId('config-select').selectOption(String(browserConfigId))
   await page.getByRole('button', { name: '创建工单', exact: true }).click()
@@ -659,6 +760,8 @@ try {
   await switchUser('demo_reviewer', demoPassword)
   assert((await page.getByRole('button', { name: /打开运行日志/ }).count()) === 0,
     'Reviewer must not see the operational log entry')
+  assert((await page.getByRole('button', { name: '效能总览', exact: true }).count()) === 0,
+    'Reviewer must not see the admin dashboard entry')
 
   await navigateDesktop(page, '工单配置', '工单配置')
   await waitForNoLoading(page, '正在加载工单配置')
@@ -803,10 +906,11 @@ try {
     fivePages: 'passed (orders filter/reset, alerts filter + detail review, quality read-only, models read-only, health refresh)',
     m2WorkOrders: 'passed (explicit alert conversion, claim/start/resolve, cancel dismissal/confirmation, read-only config preview, queue/detail at 1440/901/940/980/390)',
     m3OpsLog: 'passed (ADMIN entry, WARN default, pause stops polling, clear view, 1440/390, reviewer hidden)',
+    m4Dashboard: 'passed (ADMIN entry, SVG charts + data tables, alert/work-order snapshot asymmetry, 30-day empty state, FAILED import status/color, DQ bySource primary and no global pass-rate card, load error, 1440/390, reviewer hidden)',
     shellStyles: 'passed (scoped page-head/filters/table/card; screenshots at 1440 and 390)',
     drawer: 'passed (off-canvas, aria-expanded/controls, inert/aria-hidden, focus return, backdrop/Escape/button/nav close)',
     keyboard: 'passed (keyboard open, Escape close, closed drawer not tabbable)',
-    mobileOverflow: 'passed (orders, alerts, work orders, work-order detail, configs, quality, models, health)',
+    mobileOverflow: 'passed (orders, alerts, work orders, work-order detail, configs, quality, models, health, dashboard)',
     anonymousRedirect: 'passed',
     pageErrors: errors,
   }, null, 2))
